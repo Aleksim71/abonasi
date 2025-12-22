@@ -44,6 +44,71 @@ async function listLocations(req, res) {
   }
 }
 
+/**
+ * GET /api/locations/countries
+ * Returns: ["Germany", "Ukraine", ...]
+ */
+async function listCountries(req, res) {
+  try {
+    const r = await pool.query(
+      `SELECT DISTINCT country FROM locations ORDER BY country ASC`
+    );
+    res.json(r.rows.map((x) => x.country));
+  } catch (err) {
+    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * GET /api/locations/cities?country=Germany
+ * Returns: ["Berlin", "Munich", ...]
+ */
+async function listCities(req, res) {
+  const { country } = req.query;
+  if (!country) return res.status(400).json({ error: 'BAD_REQUEST', message: 'country is required' });
+
+  try {
+    const r = await pool.query(
+      `SELECT DISTINCT city FROM locations WHERE country = $1 ORDER BY city ASC`,
+      [country]
+    );
+    res.json(r.rows.map((x) => x.city));
+  } catch (err) {
+    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * GET /api/locations/districts?country=Germany&city=Munich
+ * Returns: [{ id, district }]
+ *
+ * Note: we return id to let frontend store locationId for ads feed.
+ */
+async function listDistricts(req, res) {
+  const { country, city } = req.query;
+  if (!country || !city) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'country and city are required' });
+  }
+
+  try {
+    const r = await pool.query(
+      `
+      SELECT id, district
+      FROM locations
+      WHERE country = $1 AND city = $2
+      ORDER BY district ASC
+      `,
+      [country, city]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
 module.exports = {
-  listLocations
+  listLocations,
+  listCountries,
+  listCities,
+  listDistricts
 };
