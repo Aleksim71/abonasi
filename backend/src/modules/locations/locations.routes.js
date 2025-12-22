@@ -5,7 +5,8 @@ const {
   listLocations,
   listCountries,
   listCities,
-  listDistricts
+  listDistricts,
+  resolveLocation
 } = require('./locations.controller');
 
 const router = express.Router();
@@ -13,8 +14,8 @@ const router = express.Router();
 router.get('/countries', listCountries);
 router.get('/cities', listCities);
 router.get('/districts', listDistricts);
+router.get('/resolve', resolveLocation);
 
-// Keep the existing list endpoint:
 router.get('/', listLocations);
 
 module.exports = router;

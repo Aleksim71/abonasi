@@ -81,8 +81,6 @@ async function listCities(req, res) {
 /**
  * GET /api/locations/districts?country=Germany&city=Munich
  * Returns: [{ id, district }]
- *
- * Note: we return id to let frontend store locationId for ads feed.
  */
 async function listDistricts(req, res) {
   const { country, city } = req.query;
@@ -106,9 +104,47 @@ async function listDistricts(req, res) {
   }
 }
 
+/**
+ * GET /api/locations/resolve?country=Germany&city=Munich&district=Laim
+ * Returns: { id, country, city, district } or 404
+ *
+ * Notes:
+ * - district match is exact (case-sensitive). Frontend should use values from /districts.
+ */
+async function resolveLocation(req, res) {
+  const { country, city, district } = req.query;
+  if (!country || !city || !district) {
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'country, city and district are required'
+    });
+  }
+
+  try {
+    const r = await pool.query(
+      `
+      SELECT id, country, city, district
+      FROM locations
+      WHERE country = $1 AND city = $2 AND district = $3
+      LIMIT 1
+      `,
+      [country, city, district]
+    );
+
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'location not found' });
+    }
+
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
 module.exports = {
   listLocations,
   listCountries,
   listCities,
-  listDistricts
+  listDistricts,
+  resolveLocation
 };
