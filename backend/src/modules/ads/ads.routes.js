@@ -4,6 +4,7 @@ const express = require('express');
 const { requireAuth } = require('../../middleware/auth');
 const {
   createDraft,
+  updateDraft,
   publishAd,
   stopAd,
   listMyAds,
@@ -12,16 +13,12 @@ const {
 
 const router = express.Router();
 
-// Public feed (MVP: requires locationId)
 router.get('/', listFeed);
-
-// My ads
 router.get('/my', requireAuth, listMyAds);
 
-// Create draft
 router.post('/', requireAuth, createDraft);
+router.patch('/:id', requireAuth, updateDraft);
 
-// State transitions
 router.post('/:id/publish', requireAuth, publishAd);
 router.post('/:id/stop', requireAuth, stopAd);
 

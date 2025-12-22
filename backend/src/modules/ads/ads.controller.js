@@ -55,7 +55,101 @@ async function createDraft(req, res) {
 
     return res.status(201).json(r.rows[0]);
   } catch (err) {
-    // FK location_id violation
+    if (err && err.code === '23503') {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
+    }
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * PATCH /api/ads/:id
+ * requires auth
+ * body (any subset):
+ * - title
+ * - description
+ * - priceCents (number | null)
+ * - locationId (uuid)
+ *
+ * Only allowed if status = 'draft' and owner matches
+ */
+async function updateDraft(req, res) {
+  const userId = req.user?.id;
+  const adId = String(req.params.id || '').trim();
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+
+  const fields = [];
+  const values = [];
+  let i = 1;
+
+  if (req.body.title !== undefined) {
+    const title = String(req.body.title || '').trim();
+    if (title.length < 3 || title.length > 120) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 3..120 chars' });
+    }
+    fields.push(`title = $${i++}`);
+    values.push(title);
+  }
+
+  if (req.body.description !== undefined) {
+    const description = String(req.body.description || '').trim();
+    if (description.length < 10 || description.length > 5000) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'description must be 10..5000 chars' });
+    }
+    fields.push(`description = $${i++}`);
+    values.push(description);
+  }
+
+  if (req.body.priceCents !== undefined) {
+    const v = req.body.priceCents;
+    if (v !== null && (!Number.isInteger(v) || v < 0)) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'priceCents must be integer >= 0 or null' });
+    }
+    fields.push(`price_cents = $${i++}`);
+    values.push(v);
+  }
+
+  if (req.body.locationId !== undefined) {
+    const locationId = String(req.body.locationId || '').trim();
+    if (!isUuid(locationId)) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId must be a UUID' });
+    }
+    fields.push(`location_id = $${i++}`);
+    values.push(locationId);
+  }
+
+  if (fields.length === 0) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'no fields to update' });
+  }
+
+  values.push(adId);
+  values.push(userId);
+
+  try {
+    const r = await pool.query(
+      `
+      UPDATE ads
+      SET ${fields.join(', ')}
+      WHERE id = $${i++}
+        AND user_id = $${i++}
+        AND status = 'draft'
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      `,
+      values
+    );
+
+    if (r.rowCount === 0) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'only own draft ads can be edited'
+      });
+    }
+
+    return res.json(r.rows[0]);
+  } catch (err) {
     if (err && err.code === '23503') {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
     }
@@ -66,8 +160,6 @@ async function createDraft(req, res) {
 /**
  * POST /api/ads/:id/publish
  * requires auth
- * -> sets status active + published_at now()
- * only own ad
  */
 async function publishAd(req, res) {
   const userId = req.user?.id;
@@ -96,7 +188,6 @@ async function publishAd(req, res) {
 
     return res.json(r.rows[0]);
   } catch (err) {
-    // could fail CHECK constraint if your record has inconsistent timestamps
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   }
 }
@@ -104,8 +195,6 @@ async function publishAd(req, res) {
 /**
  * POST /api/ads/:id/stop
  * requires auth
- * -> sets status stopped + stopped_at now()
- * only own ad
  */
 async function stopAd(req, res) {
   const userId = req.user?.id;
@@ -140,10 +229,6 @@ async function stopAd(req, res) {
 /**
  * GET /api/ads/my
  * requires auth
- * query:
- * - status=draft|active|stopped (optional)
- * - limit (optional, default 20, max 100)
- * - offset (optional, default 0)
  */
 async function listMyAds(req, res) {
   const userId = req.user?.id;
@@ -189,13 +274,8 @@ async function listMyAds(req, res) {
 }
 
 /**
- * GET /api/ads
- * query:
- * - locationId=<uuid> (required for MVP feed)
- * - limit (optional, default 20, max 100)
- * - offset (optional, default 0)
- *
- * Returns active ads in that location (district)
+ * GET /api/ads (feed)
+ * query: locationId=<uuid> (required for MVP feed)
  */
 async function listFeed(req, res) {
   const locationId = String(req.query.locationId || '').trim();
@@ -233,6 +313,7 @@ async function listFeed(req, res) {
 
 module.exports = {
   createDraft,
+  updateDraft,
   publishAd,
   stopAd,
   listMyAds,
