@@ -281,6 +281,7 @@ async function listMyAds(req, res) {
 /**
  * GET /api/ads (feed)
  * query: locationId=<uuid> (required for MVP feed)
+ * returns: previewPhoto + photosCount
  */
 async function listFeed(req, res) {
   const locationId = String(req.query.locationId || '').trim();
@@ -296,12 +297,36 @@ async function listFeed(req, res) {
     const r = await pool.query(
       `
       SELECT
-        a.id, a.location_id,
+        a.id,
+        a.location_id,
         l.country, l.city, l.district,
         a.title, a.description, a.price_cents,
-        a.status, a.created_at, a.published_at
+        a.status, a.created_at, a.published_at,
+
+        -- preview photo (first by sort_order)
+        p.id         AS "previewPhotoId",
+        p.file_path  AS "previewPhotoFilePath",
+        p.sort_order AS "previewPhotoSortOrder",
+
+        -- total photos count
+        COALESCE(pc.photos_count, 0)::int AS "photosCount"
       FROM ads a
       JOIN locations l ON l.id = a.location_id
+
+      LEFT JOIN LATERAL (
+        SELECT id, file_path, sort_order
+        FROM ad_photos
+        WHERE ad_id = a.id
+        ORDER BY sort_order ASC, created_at ASC
+        LIMIT 1
+      ) p ON true
+
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS photos_count
+        FROM ad_photos
+        WHERE ad_id = a.id
+      ) pc ON true
+
       WHERE a.location_id = $1
         AND a.status = 'active'
       ORDER BY a.published_at DESC NULLS LAST, a.created_at DESC
@@ -310,11 +335,28 @@ async function listFeed(req, res) {
       [locationId, limit, offset]
     );
 
-    return res.json(r.rows);
+    const rows = r.rows.map((row) => {
+      const previewPhoto = row.previewPhotoId
+        ? {
+            id: row.previewPhotoId,
+            filePath: row.previewPhotoFilePath,
+            sortOrder: row.previewPhotoSortOrder
+          }
+        : null;
+
+      // убрать служебные поля из ответа
+      // eslint-disable-next-line no-unused-vars
+      const { previewPhotoId, previewPhotoFilePath, previewPhotoSortOrder, ...rest } = row;
+
+      return { ...rest, previewPhoto };
+    });
+
+    return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   }
 }
+
 
 /**
  * GET /api/ads/:id (public card)
