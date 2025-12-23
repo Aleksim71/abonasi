@@ -170,6 +170,7 @@ async function updateDraft(req, res) {
  * - only draft can be published
  * - title 3..120
  * - description 10..5000
+ * - at least 1 photo required
  */
 async function publishAd(req, res) {
   const userId = req.user?.id;
@@ -223,6 +224,23 @@ async function publishAd(req, res) {
       });
     }
 
+    // 3.5) require at least one photo
+    const photos = await pool.query(
+      `
+      SELECT COUNT(*)::int AS cnt
+      FROM ad_photos
+      WHERE ad_id = $1
+      `,
+      [adId]
+    );
+
+    if (photos.rows[0].cnt === 0) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot publish: at least one photo is required'
+      });
+    }
+
     // 4) publish
     const r = await pool.query(
       `
@@ -250,10 +268,12 @@ async function publishAd(req, res) {
   }
 }
 
-
 /**
  * POST /api/ads/:id/stop
  * requires auth
+ * rules:
+ * - only owner
+ * - only active can be stopped
  */
 async function stopAd(req, res) {
   const userId = req.user?.id;
@@ -264,19 +284,49 @@ async function stopAd(req, res) {
   }
 
   try {
+    // 1) load current ad state (only own)
+    const cur = await pool.query(
+      `
+      SELECT id, status
+      FROM ads
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+      `,
+      [adId, userId]
+    );
+
+    if (!cur.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    }
+
+    const ad = cur.rows[0];
+
+    // 2) only active can be stopped
+    if (ad.status !== 'active') {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'only active ads can be stopped'
+      });
+    }
+
+    // 3) stop
     const r = await pool.query(
       `
       UPDATE ads
       SET status = 'stopped',
           stopped_at = now()
-      WHERE id = $1 AND user_id = $2
+      WHERE id = $1 AND user_id = $2 AND status = 'active'
       RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
       `,
       [adId, userId]
     );
 
-    if (r.rowCount === 0) {
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    // race-safety
+    if (!r.rowCount) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot stop this ad'
+      });
     }
 
     return res.json(r.rows[0]);
@@ -284,6 +334,7 @@ async function stopAd(req, res) {
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   }
 }
+
 
 /**
  * GET /api/ads/my
@@ -398,7 +449,6 @@ async function listFeed(req, res) {
           }
         : null;
 
-      // убрать служебные поля из ответа
       // eslint-disable-next-line no-unused-vars
       const { previewPhotoId, previewPhotoFilePath, previewPhotoSortOrder, ...rest } = row;
 
@@ -410,7 +460,6 @@ async function listFeed(req, res) {
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   }
 }
-
 
 /**
  * GET /api/ads/:id (public card)
@@ -665,18 +714,15 @@ async function reorderPhotosInDraft(req, res) {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    // ✅ STEP 1: temporary shift to avoid UNIQUE(ad_id, sort_order) conflicts
-    await client.query(
-      `UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`,
-      [adId]
-    );
+    // temporary shift to avoid UNIQUE(ad_id, sort_order) conflicts
+    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
 
-    // ✅ STEP 2: apply final sort orders
     for (const it of items) {
-      await client.query(
-        `UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`,
-        [it.sortOrder, it.photoId, adId]
-      );
+      await client.query(`UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`, [
+        it.sortOrder,
+        it.photoId,
+        adId
+      ]);
     }
 
     await client.query('COMMIT');
