@@ -9,6 +9,7 @@ const {
   updateDraft,
   publishAd,
   stopAd,
+  restartAd,
   listMyAds,
   listFeed,
   getAdById,
@@ -31,11 +32,12 @@ router.patch('/:id', requireAuth, updateDraft);
 router.post('/:id/publish', requireAuth, publishAd);
 router.post('/:id/stop', requireAuth, stopAd);
 
+// ✅ restart stopped -> active
+router.post('/:id/restart', requireAuth, restartAd);
+
 // photos (MVP)
 router.post('/:id/photos', requireAuth, addPhotoToDraft);
-
 router.delete('/:id/photos/:photoId', requireAuth, deletePhotoFromDraft);
 router.put('/:id/photos/reorder', requireAuth, reorderPhotosInDraft);
-
 
 module.exports = router;

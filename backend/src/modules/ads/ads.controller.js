@@ -254,7 +254,7 @@ async function publishAd(req, res) {
       [adId, userId]
     );
 
-    // race-safety (if status changed between select+update)
+    // race-safety
     if (!r.rowCount) {
       return res.status(409).json({
         error: 'NOT_ALLOWED',
@@ -335,6 +335,82 @@ async function stopAd(req, res) {
   }
 }
 
+/**
+ * POST /api/ads/:id/restart
+ * requires auth
+ * rules:
+ * - only owner
+ * - only stopped can be restarted
+ * - published_at is NOT changed
+ * - stopped_at is cleared
+ */
+async function restartAd(req, res) {
+  const userId = req.user?.id;
+  const adId = String(req.params.id || '').trim();
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+
+  try {
+    // 1) load current ad state (only own)
+    const cur = await pool.query(
+      `
+      SELECT id, status, published_at
+      FROM ads
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+      `,
+      [adId, userId]
+    );
+
+    if (!cur.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    }
+
+    const ad = cur.rows[0];
+
+    // 2) only stopped
+    if (ad.status !== 'stopped') {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'only stopped ads can be restarted'
+      });
+    }
+
+    // safety: stopped without published_at shouldn't happen, but protect anyway
+    if (!ad.published_at) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot restart: ad was never published'
+      });
+    }
+
+    // 3) restart (do NOT touch published_at)
+    const r = await pool.query(
+      `
+      UPDATE ads
+      SET status = 'active',
+          stopped_at = NULL
+      WHERE id = $1 AND user_id = $2 AND status = 'stopped'
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      `,
+      [adId, userId]
+    );
+
+    // race-safety
+    if (!r.rowCount) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot restart this ad'
+      });
+    }
+
+    return res.json(r.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
 
 /**
  * GET /api/ads/my
@@ -758,6 +834,7 @@ module.exports = {
   updateDraft,
   publishAd,
   stopAd,
+  restartAd,
   listMyAds,
   listFeed,
   getAdById,
