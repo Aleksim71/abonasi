@@ -92,7 +92,7 @@ async function createDraft(req, res) {
  * requires auth
  *
  * ✅ Draft: обычная правка
- * ✅ Active/Stopped: "редакция" = STOP старого + создание нового (fork)
+ * ✅ Active/Stopped: "редакция" = создание нового (fork) (+ stop old if active)
  *
  * body (any subset):
  * - title
@@ -108,7 +108,7 @@ async function updateAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
 
-  // 1) грузим объявление (только своё)
+  // 1) load current ad state (only own)
   let cur;
   try {
     cur = await pool.query(
@@ -130,7 +130,7 @@ async function updateAd(req, res) {
 
   const oldAd = cur.rows[0];
 
-  // 2) собираем "новые значения" = old + patch
+  // 2) build next values = old + patch
   const patch = {
     location_id: oldAd.location_id,
     title: oldAd.title,
@@ -183,7 +183,7 @@ async function updateAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'no fields to update' });
   }
 
-  // 3) Если draft — обычный update
+  // 3) Draft -> normal update
   if (oldAd.status === 'draft') {
     try {
       const r = await pool.query(
@@ -209,7 +209,13 @@ async function updateAd(req, res) {
         });
       }
 
-      return res.json(r.rows[0]);
+      return res.json({
+        data: r.rows[0],
+        notice: {
+          mode: 'updated',
+          message: 'Draft ad updated'
+        }
+      });
     } catch (err) {
       if (err && err.code === '23503') {
         return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
@@ -218,14 +224,17 @@ async function updateAd(req, res) {
     }
   }
 
-  // 4) active/stopped — fork (создаём новое), старое НЕ редактируем
+  // 4) Active/Stopped -> fork (create new), old is NOT edited
+  // Policy:
+  // - active  -> new active (published immediately), old becomes stopped
+  // - stopped -> new draft (user may publish), old stays stopped
   const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 4.1) если создаём новое ACTIVE — у старого должно быть >= 1 фото (которые мы копируем)
+    // 4.1) if new is ACTIVE -> old must have >=1 photo (we copy them)
     if (forkTargetStatus === 'active') {
       const photosCnt = await client.query(`SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`, [adId]);
       if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
@@ -237,15 +246,15 @@ async function updateAd(req, res) {
       }
     }
 
-    // 4.2) создаём новое объявление (enum-safe)
+    // 4.2) create new ad (FIX: explicit casts for enum ad_status + timestamps)
     const ins = await client.query(
       `
       INSERT INTO ads (user_id, location_id, title, description, price_cents, status, published_at, stopped_at)
       VALUES (
         $1, $2, $3, $4, $5,
         $6::ad_status,
-        CASE WHEN $6::text = 'active' THEN now() ELSE NULL END,
-        NULL
+        CASE WHEN $6::ad_status = 'active'::ad_status THEN now() ELSE NULL::timestamptz END,
+        NULL::timestamptz
       )
       RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
       `,
@@ -254,7 +263,7 @@ async function updateAd(req, res) {
 
     const newAd = ins.rows[0];
 
-    // 4.3) копируем фото
+    // 4.3) copy photos
     await client.query(
       `
       INSERT INTO ad_photos (ad_id, file_path, sort_order)
@@ -266,7 +275,7 @@ async function updateAd(req, res) {
       [newAd.id, adId]
     );
 
-    // 4.4) старое ACTIVE -> STOP
+    // 4.4) old ACTIVE -> STOP
     if (oldAd.status === 'active') {
       const stopped = await client.query(
         `
@@ -286,6 +295,11 @@ async function updateAd(req, res) {
 
     await client.query('COMMIT');
 
+    const noticeMessage =
+      oldAd.status === 'active'
+        ? 'This ad was published. A new version has been created and published; the old one has been stopped.'
+        : 'This ad was stopped. A new draft version has been created; the old one remains stopped.';
+
     return res.json({
       data: {
         mode: 'forked',
@@ -293,6 +307,10 @@ async function updateAd(req, res) {
         newAdId: newAd.id,
         newStatus: newAd.status,
         ad: newAd
+      },
+      notice: {
+        mode: 'forked',
+        message: noticeMessage
       }
     });
   } catch (err) {
@@ -313,12 +331,6 @@ async function updateAd(req, res) {
 /**
  * POST /api/ads/:id/publish
  * requires auth
- * rules:
- * - only owner
- * - only draft can be published
- * - title 3..120
- * - description 10..5000
- * - at least 1 photo required
  */
 async function publishAd(req, res) {
   const userId = req.user?.id;
@@ -413,9 +425,6 @@ async function publishAd(req, res) {
 /**
  * POST /api/ads/:id/stop
  * requires auth
- * rules:
- * - only owner
- * - only active can be stopped
  */
 async function stopAd(req, res) {
   const userId = req.user?.id;
@@ -476,9 +485,6 @@ async function stopAd(req, res) {
 /**
  * POST /api/ads/:id/restart
  * requires auth
- * rules:
- * - only owner
- * - only stopped can be restarted
  */
 async function restartAd(req, res) {
   const userId = req.user?.id;
@@ -605,10 +611,12 @@ async function listFeed(req, res) {
         a.title, a.description, a.price_cents,
         a.status, a.created_at, a.published_at,
 
+        -- preview photo (first by sort_order)
         p.id         AS "previewPhotoId",
         p.file_path  AS "previewPhotoFilePath",
         p.sort_order AS "previewPhotoSortOrder",
 
+        -- total photos count
         COALESCE(pc.photos_count, 0)::int AS "photosCount"
       FROM ads a
       JOIN locations l ON l.id = a.location_id
@@ -725,7 +733,6 @@ async function getAdById(req, res) {
 /**
  * POST /api/ads/:id/photos
  * requires auth
- * body: { filePath, sortOrder? }
  * MVP: only owner + only draft
  */
 async function addPhotoToDraft(req, res) {
@@ -747,10 +754,10 @@ async function addPhotoToDraft(req, res) {
   }
 
   try {
-    const adCheck = await pool.query(`SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`, [
-      adId,
-      userId
-    ]);
+    const adCheck = await pool.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
 
     if (!adCheck.rowCount) {
       return res.status(409).json({
@@ -820,15 +827,18 @@ async function deletePhotoFromDraft(req, res) {
   }
 
   try {
-    const adCheck = await pool.query(`SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`, [
-      adId,
-      userId
-    ]);
+    const adCheck = await pool.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
     if (!adCheck.rowCount) {
       return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
-    const del = await pool.query(`DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`, [photoId, adId]);
+    const del = await pool.query(
+      `DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`,
+      [photoId, adId]
+    );
     if (!del.rowCount) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'photo not found' });
     }
@@ -856,7 +866,6 @@ async function deletePhotoFromDraft(req, res) {
 /**
  * PUT /api/ads/:id/photos/reorder
  * requires auth
- * body: { items: [{ photoId, sortOrder }] }
  * MVP: only owner + only draft
  */
 async function reorderPhotosInDraft(req, res) {
@@ -887,22 +896,26 @@ async function reorderPhotosInDraft(req, res) {
   try {
     await client.query('BEGIN');
 
-    const adCheck = await client.query(`SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`, [
-      adId,
-      userId
-    ]);
+    const adCheck = await client.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
     if (!adCheck.rowCount) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
     const ids = items.map((x) => String(x.photoId).trim());
-    const own = await client.query(`SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`, [adId, ids]);
+    const own = await client.query(
+      `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
+      [adId, ids]
+    );
     if (own.rowCount !== ids.length) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
+    // temporary shift to avoid UNIQUE(ad_id, sort_order) conflicts
     await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
 
     for (const it of items) {
