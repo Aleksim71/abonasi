@@ -19,16 +19,5 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000
 });
 
-async function dbHealthcheck() {
-  try {
-    const r = await pool.query('SELECT 1 AS ok');
-    return { ok: true, result: r.rows[0].ok };
-  } catch (err) {
-    return { ok: false, error: String(err.message || err) };
-  }
-}
-
-module.exports = {
-  pool,
-  dbHealthcheck
-};
+// Экспортируем pool — его будут использовать контроллеры через db.query(...)
+module.exports = pool;
