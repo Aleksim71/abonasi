@@ -165,6 +165,11 @@ async function updateDraft(req, res) {
 /**
  * POST /api/ads/:id/publish
  * requires auth
+ * rules:
+ * - only owner
+ * - only draft can be published
+ * - title 3..120
+ * - description 10..5000
  */
 async function publishAd(req, res) {
   const userId = req.user?.id;
@@ -175,20 +180,68 @@ async function publishAd(req, res) {
   }
 
   try {
+    // 1) load current ad state
+    const cur = await pool.query(
+      `
+      SELECT id, status, title, description
+      FROM ads
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+      `,
+      [adId, userId]
+    );
+
+    if (!cur.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    }
+
+    const ad = cur.rows[0];
+
+    // 2) only draft
+    if (ad.status !== 'draft') {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'only draft ads can be published'
+      });
+    }
+
+    // 3) validate fields (same rules as create/update)
+    const title = String(ad.title || '').trim();
+    const description = String(ad.description || '').trim();
+
+    if (title.length < 3 || title.length > 120) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot publish: title must be 3..120 chars'
+      });
+    }
+
+    if (description.length < 10 || description.length > 5000) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot publish: description must be 10..5000 chars'
+      });
+    }
+
+    // 4) publish
     const r = await pool.query(
       `
       UPDATE ads
       SET status = 'active',
           published_at = now(),
           stopped_at = NULL
-      WHERE id = $1 AND user_id = $2
+      WHERE id = $1 AND user_id = $2 AND status = 'draft'
       RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
       `,
       [adId, userId]
     );
 
-    if (r.rowCount === 0) {
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    // race-safety (if status changed between select+update)
+    if (!r.rowCount) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot publish this ad'
+      });
     }
 
     return res.json(r.rows[0]);
@@ -196,6 +249,7 @@ async function publishAd(req, res) {
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   }
 }
+
 
 /**
  * POST /api/ads/:id/stop
