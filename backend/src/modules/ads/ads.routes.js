@@ -6,7 +6,7 @@ const { optionalAuth } = require('../../middleware/optionalAuth');
 
 const {
   createDraft,
-  updateDraft,
+  updateAd,
   publishAd,
   stopAd,
   restartAd,
@@ -27,12 +27,12 @@ router.get('/my', requireAuth, listMyAds);
 router.get('/:id', optionalAuth, getAdById);
 
 router.post('/', requireAuth, createDraft);
-router.patch('/:id', requireAuth, updateDraft);
+
+// PATCH: draft = update; published/stopped = fork (+ stop old if active)
+router.patch('/:id', requireAuth, updateAd);
 
 router.post('/:id/publish', requireAuth, publishAd);
 router.post('/:id/stop', requireAuth, stopAd);
-
-// ✅ restart stopped -> active
 router.post('/:id/restart', requireAuth, restartAd);
 
 // photos (MVP)
