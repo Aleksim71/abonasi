@@ -1,10 +1,12 @@
 'use strict';
 
-const { pool } = require('../../config/db');
+const pool = require('../../config/db');
 
 function isUuid(v) {
-  return typeof v === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  return (
+    typeof v === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
+  );
 }
 
 function toInt(v, def) {
@@ -26,9 +28,10 @@ async function createDraft(req, res) {
   const description = String(req.body.description || '').trim();
 
   const priceCentsRaw = req.body.priceCents;
-  const priceCents = (priceCentsRaw === null || priceCentsRaw === undefined || priceCentsRaw === '')
-    ? null
-    : Number(priceCentsRaw);
+  const priceCents =
+    priceCentsRaw === null || priceCentsRaw === undefined || priceCentsRaw === ''
+      ? null
+      : Number(priceCentsRaw);
 
   if (!isUuid(locationId)) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId must be a UUID' });
@@ -40,7 +43,9 @@ async function createDraft(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'description must be 10..5000 chars' });
   }
   if (priceCents !== null && (!Number.isInteger(priceCents) || priceCents < 0)) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'priceCents must be a non-negative integer or null' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'priceCents must be a non-negative integer or null' });
   }
 
   try {
@@ -311,11 +316,310 @@ async function listFeed(req, res) {
   }
 }
 
+/**
+ * GET /api/ads/:id (public card)
+ * - public: only active
+ * - owner: any status
+ */
+async function getAdById(req, res) {
+  const adId = String(req.params.id || '').trim();
+  const viewerUserId = req.user?.id ?? null;
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+
+  try {
+    const adRes = await pool.query(
+      `
+      SELECT
+        a.id, a.user_id, a.location_id,
+        l.country, l.city, l.district,
+        a.title, a.description, a.price_cents,
+        a.status, a.created_at, a.published_at, a.stopped_at
+      FROM ads a
+      JOIN locations l ON l.id = a.location_id
+      WHERE a.id = $1
+      LIMIT 1
+      `,
+      [adId]
+    );
+
+    if (!adRes.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    const ad = adRes.rows[0];
+    const isOwner = viewerUserId && String(viewerUserId) === String(ad.user_id);
+
+    if (!isOwner && ad.status !== 'active') {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    const photosRes = await pool.query(
+      `
+      SELECT
+        id,
+        file_path AS "filePath",
+        sort_order AS "sortOrder",
+        created_at AS "createdAt"
+      FROM ad_photos
+      WHERE ad_id = $1
+      ORDER BY sort_order ASC, created_at ASC
+      `,
+      [adId]
+    );
+
+    return res.json({
+      data: {
+        ...ad,
+        isOwner: Boolean(isOwner),
+        photos: photosRes.rows
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * POST /api/ads/:id/photos
+ * requires auth
+ * body: { filePath, sortOrder? }
+ * MVP: only owner + only draft
+ */
+async function addPhotoToDraft(req, res) {
+  const userId = req.user?.id;
+  const adId = String(req.params.id || '').trim();
+
+  const filePath = String(req.body.filePath || '').trim();
+  const sortOrderRaw = req.body.sortOrder;
+  const sortOrder = sortOrderRaw === undefined || sortOrderRaw === null ? 0 : Number(sortOrderRaw);
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+  if (!filePath || filePath.length < 3 || filePath.length > 500) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'filePath must be 3..500 chars' });
+  }
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 50) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'sortOrder must be integer 0..50' });
+  }
+
+  try {
+    const adCheck = await pool.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
+
+    if (!adCheck.rowCount) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'only own draft ads can be edited'
+      });
+    }
+
+    try {
+      await pool.query(
+        `
+        INSERT INTO ad_photos (ad_id, file_path, sort_order)
+        VALUES ($1, $2, $3)
+        `,
+        [adId, filePath, sortOrder]
+      );
+    } catch (e) {
+      if (e && e.code === '23505') {
+        return res.status(409).json({
+          error: 'CONFLICT',
+          message: 'photo with this sortOrder already exists'
+        });
+      }
+      throw e;
+    }
+
+    const photosRes = await pool.query(
+      `
+      SELECT
+        id,
+        file_path AS "filePath",
+        sort_order AS "sortOrder",
+        created_at AS "createdAt"
+      FROM ad_photos
+      WHERE ad_id = $1
+      ORDER BY sort_order ASC, created_at ASC
+      `,
+      [adId]
+    );
+
+    return res.status(201).json({
+      data: {
+        adId,
+        photos: photosRes.rows
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * DELETE /api/ads/:id/photos/:photoId
+ * requires auth
+ * MVP: only owner + only draft
+ */
+async function deletePhotoFromDraft(req, res) {
+  const userId = req.user?.id;
+  const adId = String(req.params.id || '').trim();
+  const photoId = String(req.params.photoId || '').trim();
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+  if (!isUuid(photoId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'photo id must be a UUID' });
+  }
+
+  try {
+    const adCheck = await pool.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
+    if (!adCheck.rowCount) {
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+    }
+
+    const del = await pool.query(
+      `DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`,
+      [photoId, adId]
+    );
+    if (!del.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'photo not found' });
+    }
+
+    const photosRes = await pool.query(
+      `
+      SELECT
+        id,
+        file_path AS "filePath",
+        sort_order AS "sortOrder",
+        created_at AS "createdAt"
+      FROM ad_photos
+      WHERE ad_id = $1
+      ORDER BY sort_order ASC, created_at ASC
+      `,
+      [adId]
+    );
+
+    return res.json({ data: { adId, photos: photosRes.rows } });
+  } catch (err) {
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * PUT /api/ads/:id/photos/reorder
+ * requires auth
+ * body: { items: [{ photoId, sortOrder }] }
+ * MVP: only owner + only draft
+ */
+async function reorderPhotosInDraft(req, res) {
+  const userId = req.user?.id;
+  const adId = String(req.params.id || '').trim();
+  const items = req.body?.items;
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
+  }
+
+  for (const it of items) {
+    const photoId = String(it?.photoId || '').trim();
+    const sortOrder = Number(it?.sortOrder);
+
+    if (!isUuid(photoId)) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'each item.photoId must be UUID' });
+    }
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 50) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'each item.sortOrder must be integer 0..50' });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const adCheck = await client.query(
+      `SELECT id FROM ads WHERE id = $1 AND user_id = $2 AND status = 'draft' LIMIT 1`,
+      [adId, userId]
+    );
+    if (!adCheck.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+    }
+
+    const ids = items.map((x) => String(x.photoId).trim());
+    const own = await client.query(
+      `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
+      [adId, ids]
+    );
+    if (own.rowCount !== ids.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
+    }
+
+    // ✅ STEP 1: temporary shift to avoid UNIQUE(ad_id, sort_order) conflicts
+    await client.query(
+      `UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`,
+      [adId]
+    );
+
+    // ✅ STEP 2: apply final sort orders
+    for (const it of items) {
+      await client.query(
+        `UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`,
+        [it.sortOrder, it.photoId, adId]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const photosRes = await pool.query(
+      `
+      SELECT
+        id,
+        file_path AS "filePath",
+        sort_order AS "sortOrder",
+        created_at AS "createdAt"
+      FROM ad_photos
+      WHERE ad_id = $1
+      ORDER BY sort_order ASC, created_at ASC
+      `,
+      [adId]
+    );
+
+    return res.json({ data: { adId, photos: photosRes.rows } });
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
+
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createDraft,
   updateDraft,
   publishAd,
   stopAd,
   listMyAds,
-  listFeed
+  listFeed,
+  getAdById,
+  addPhotoToDraft,
+  deletePhotoFromDraft,
+  reorderPhotosInDraft
 };
