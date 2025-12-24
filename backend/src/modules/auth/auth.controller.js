@@ -2,7 +2,7 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const  pool  = require('../../config/db');
+const { pool }  = require('../../config/db');
 
 const SALT_ROUNDS = 12;
 
@@ -82,6 +82,7 @@ async function login(req, res) {
       `SELECT id, email, name, password_hash FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
+
 
     if (r.rowCount === 0) {
       return res.status(401).json({ error: 'UNAUTHORIZED', message: 'invalid credentials' });
