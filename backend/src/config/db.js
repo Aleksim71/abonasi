@@ -19,5 +19,26 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000
 });
 
-// Экспортируем pool — его будут использовать контроллеры через db.query(...)
-module.exports = pool;
+/**
+ * DB healthcheck
+ * - used by /api/health
+ * - NEVER throws (caller may wrap, but we keep it safe too)
+ */
+async function dbHealthcheck() {
+  const t0 = Date.now();
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT 1');
+    return {
+      ok: true,
+      latencyMs: Date.now() - t0
+    };
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = {
+  pool,
+  dbHealthcheck
+};

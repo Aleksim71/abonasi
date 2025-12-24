@@ -1,6 +1,7 @@
 'use strict';
 
-const pool = require('../../config/db');
+const { pool } = require('../../config/db');
+
 
 function isUuid(v) {
   return (
@@ -73,7 +74,7 @@ async function createDraft(req, res) {
       `
       INSERT INTO ads (user_id, location_id, title, description, price_cents, status)
       VALUES ($1, $2, $3, $4, $5, 'draft')
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [userId, locationId, vt.value, vd.value, priceCents]
     );
@@ -93,12 +94,6 @@ async function createDraft(req, res) {
  *
  * ✅ Draft: обычная правка
  * ✅ Active/Stopped: "редакция" = создание нового (fork) (+ stop old if active)
- *
- * body (any subset):
- * - title
- * - description
- * - priceCents (number | null)
- * - locationId (uuid)
  */
 async function updateAd(req, res) {
   const userId = req.user?.id;
@@ -106,71 +101,6 @@ async function updateAd(req, res) {
 
   if (!isUuid(adId)) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
-  }
-
-  // 1) load current ad state (only own)
-  let cur;
-  try {
-    cur = await pool.query(
-      `
-      SELECT id, user_id, status, location_id, title, description, price_cents, published_at
-      FROM ads
-      WHERE id = $1 AND user_id = $2
-      LIMIT 1
-      `,
-      [adId, userId]
-    );
-  } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
-  }
-
-  if (!cur.rowCount) {
-    return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-  }
-
-  const oldAd = cur.rows[0];
-
-  // 2) build next values = old + patch
-  const patch = {
-    location_id: oldAd.location_id,
-    title: oldAd.title,
-    description: oldAd.description,
-    price_cents: oldAd.price_cents
-  };
-
-  if (req.body.locationId !== undefined) {
-    const locationId = String(req.body.locationId || '').trim();
-    if (!isUuid(locationId)) {
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId must be a UUID' });
-    }
-    patch.location_id = locationId;
-  }
-
-  if (req.body.title !== undefined) {
-    const vt = validateTitle(req.body.title);
-    if (!vt.ok) return res.status(400).json({ error: 'BAD_REQUEST', message: vt.message });
-    patch.title = vt.value;
-  } else {
-    const vt = validateTitle(patch.title);
-    if (!vt.ok) return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing title' });
-    patch.title = vt.value;
-  }
-
-  if (req.body.description !== undefined) {
-    const vd = validateDescription(req.body.description);
-    if (!vd.ok) return res.status(400).json({ error: 'BAD_REQUEST', message: vd.message });
-    patch.description = vd.value;
-  } else {
-    const vd = validateDescription(patch.description);
-    if (!vd.ok)
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing description' });
-    patch.description = vd.value;
-  }
-
-  if (req.body.priceCents !== undefined) {
-    const vp = validatePriceCents(req.body.priceCents);
-    if (!vp.ok) return res.status(400).json({ error: 'BAD_REQUEST', message: vp.message });
-    patch.price_cents = vp.value;
   }
 
   const hasAnyField =
@@ -183,10 +113,91 @@ async function updateAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'no fields to update' });
   }
 
-  // 3) Draft -> normal update
-  if (oldAd.status === 'draft') {
-    try {
-      const r = await pool.query(
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const cur = await client.query(
+      `
+      SELECT id, user_id, status, location_id, title, description, price_cents, published_at, replaced_by_ad_id
+      FROM ads
+      WHERE id = $1 AND user_id = $2
+      FOR UPDATE
+      `,
+      [adId, userId]
+    );
+
+    if (!cur.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    }
+
+    const oldAd = cur.rows[0];
+
+    if (oldAd.replaced_by_ad_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'this ad is already replaced' });
+    }
+
+    const patch = {
+      location_id: oldAd.location_id,
+      title: oldAd.title,
+      description: oldAd.description,
+      price_cents: oldAd.price_cents
+    };
+
+    if (req.body.locationId !== undefined) {
+      const locationId = String(req.body.locationId || '').trim();
+      if (!isUuid(locationId)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId must be a UUID' });
+      }
+      patch.location_id = locationId;
+    }
+
+    if (req.body.title !== undefined) {
+      const vt = validateTitle(req.body.title);
+      if (!vt.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'BAD_REQUEST', message: vt.message });
+      }
+      patch.title = vt.value;
+    } else {
+      const vt = validateTitle(patch.title);
+      if (!vt.ok) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing title' });
+      }
+      patch.title = vt.value;
+    }
+
+    if (req.body.description !== undefined) {
+      const vd = validateDescription(req.body.description);
+      if (!vd.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'BAD_REQUEST', message: vd.message });
+      }
+      patch.description = vd.value;
+    } else {
+      const vd = validateDescription(patch.description);
+      if (!vd.ok) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing description' });
+      }
+      patch.description = vd.value;
+    }
+
+    if (req.body.priceCents !== undefined) {
+      const vp = validatePriceCents(req.body.priceCents);
+      if (!vp.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'BAD_REQUEST', message: vp.message });
+      }
+      patch.price_cents = vp.value;
+    }
+
+    if (oldAd.status === 'draft') {
+      const r = await client.query(
         `
         UPDATE ads
         SET
@@ -197,44 +208,28 @@ async function updateAd(req, res) {
         WHERE id = $5
           AND user_id = $6
           AND status = 'draft'
-        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
         `,
         [patch.location_id, patch.title, patch.description, patch.price_cents, adId, userId]
       );
 
       if (!r.rowCount) {
-        return res.status(409).json({
-          error: 'NOT_ALLOWED',
-          message: 'only own draft ads can be edited'
-        });
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
       }
 
+      await client.query('COMMIT');
       return res.json({
         data: r.rows[0],
-        notice: {
-          mode: 'updated',
-          message: 'Draft ad updated'
-        }
+        notice: { mode: 'updated', message: 'Draft ad updated' }
       });
-    } catch (err) {
-      if (err && err.code === '23503') {
-        return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
-      }
-      return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
     }
-  }
 
-  // 4) Active/Stopped -> fork (create new), old is NOT edited
-  // Policy:
-  // - active  -> new active (published immediately), old becomes stopped
-  // - stopped -> new draft (user may publish), old stays stopped
-  const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
+    const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+    // ✅ bypass trigger for non-draft updates
+    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
 
-    // 4.1) if new is ACTIVE -> old must have >=1 photo (we copy them)
     if (forkTargetStatus === 'active') {
       const photosCnt = await client.query(`SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`, [adId]);
       if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
@@ -246,24 +241,27 @@ async function updateAd(req, res) {
       }
     }
 
-    // 4.2) create new ad (FIX: explicit casts for enum ad_status + timestamps)
     const ins = await client.query(
       `
-      INSERT INTO ads (user_id, location_id, title, description, price_cents, status, published_at, stopped_at)
+      INSERT INTO ads (
+        user_id, location_id, title, description, price_cents,
+        status, published_at, stopped_at,
+        parent_ad_id
+      )
       VALUES (
         $1, $2, $3, $4, $5,
         $6::ad_status,
         CASE WHEN $6::ad_status = 'active'::ad_status THEN now() ELSE NULL::timestamptz END,
-        NULL::timestamptz
+        NULL::timestamptz,
+        $7::uuid
       )
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
-      [userId, patch.location_id, patch.title, patch.description, patch.price_cents, forkTargetStatus]
+      [userId, patch.location_id, patch.title, patch.description, patch.price_cents, forkTargetStatus, adId]
     );
 
     const newAd = ins.rows[0];
 
-    // 4.3) copy photos
     await client.query(
       `
       INSERT INTO ad_photos (ad_id, file_path, sort_order)
@@ -275,19 +273,35 @@ async function updateAd(req, res) {
       [newAd.id, adId]
     );
 
-    // 4.4) old ACTIVE -> STOP
     if (oldAd.status === 'active') {
       const stopped = await client.query(
         `
         UPDATE ads
         SET status = 'stopped',
-            stopped_at = now()
+            stopped_at = now(),
+            replaced_by_ad_id = $3
         WHERE id = $1 AND user_id = $2 AND status = 'active'
+          AND replaced_by_ad_id IS NULL
         `,
-        [adId, userId]
+        [adId, userId, newAd.id]
       );
 
       if (!stopped.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
+      }
+    } else {
+      const linked = await client.query(
+        `
+        UPDATE ads
+        SET replaced_by_ad_id = $1
+        WHERE id = $2 AND user_id = $3 AND status = 'stopped'
+          AND replaced_by_ad_id IS NULL
+        `,
+        [newAd.id, adId, userId]
+      );
+
+      if (!linked.rowCount) {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
       }
@@ -308,10 +322,7 @@ async function updateAd(req, res) {
         newStatus: newAd.status,
         ad: newAd
       },
-      notice: {
-        mode: 'forked',
-        message: noticeMessage
-      }
+      notice: { mode: 'forked', message: noticeMessage }
     });
   } catch (err) {
     try {
@@ -320,6 +331,10 @@ async function updateAd(req, res) {
 
     if (err && err.code === '23503') {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
+    }
+
+    if (err && err.code === '45000') {
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
     }
 
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
@@ -404,7 +419,7 @@ async function publishAd(req, res) {
           published_at = now(),
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'draft'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -434,51 +449,70 @@ async function stopAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
 
+  const client = await pool.connect();
   try {
-    const cur = await pool.query(
+    await client.query('BEGIN');
+
+    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
+
+    const cur = await client.query(
       `
       SELECT id, status
       FROM ads
       WHERE id = $1 AND user_id = $2
-      LIMIT 1
+      FOR UPDATE
       `,
       [adId, userId]
     );
 
     if (!cur.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
 
     if (ad.status !== 'active') {
+      await client.query('ROLLBACK');
       return res.status(409).json({
         error: 'NOT_ALLOWED',
         message: 'only active ads can be stopped'
       });
     }
 
-    const r = await pool.query(
+    const r = await client.query(
       `
       UPDATE ads
       SET status = 'stopped',
           stopped_at = now()
       WHERE id = $1 AND user_id = $2 AND status = 'active'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
 
     if (!r.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(409).json({
         error: 'NOT_ALLOWED',
         message: 'cannot stop this ad'
       });
     }
 
+    await client.query('COMMIT');
     return res.json(r.rows[0]);
   } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
+
+    if (err && err.code === '45000') {
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
+    }
+
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  } finally {
+    client.release();
   }
 }
 
@@ -524,7 +558,7 @@ async function restartAd(req, res) {
       SET status = 'active',
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'stopped'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -569,7 +603,8 @@ async function listMyAds(req, res) {
       a.id, a.user_id, a.location_id,
       l.country, l.city, l.district,
       a.title, a.description, a.price_cents,
-      a.status, a.created_at, a.published_at, a.stopped_at
+      a.status, a.created_at, a.published_at, a.stopped_at,
+      a.parent_ad_id, a.replaced_by_ad_id
     FROM ads a
     JOIN locations l ON l.id = a.location_id
     ${where}
@@ -684,7 +719,8 @@ async function getAdById(req, res) {
         a.id, a.user_id, a.location_id,
         l.country, l.city, l.district,
         a.title, a.description, a.price_cents,
-        a.status, a.created_at, a.published_at, a.stopped_at
+        a.status, a.created_at, a.published_at, a.stopped_at,
+        a.parent_ad_id, a.replaced_by_ad_id
       FROM ads a
       JOIN locations l ON l.id = a.location_id
       WHERE a.id = $1
@@ -723,6 +759,187 @@ async function getAdById(req, res) {
         ...ad,
         isOwner: Boolean(isOwner),
         photos: photosRes.rows
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  }
+}
+
+/**
+ * GET /api/ads/:id/versions
+ * - public: only if this ad is active
+ * - owner: any status
+ *
+ * returns timeline: oldest-parent ... current ... replaced chain
+ */
+async function getAdVersions(req, res) {
+  const adId = String(req.params.id || '').trim();
+  const viewerUserId = req.user?.id ?? null;
+
+  if (!isUuid(adId)) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+  }
+
+  try {
+    // 1) base ad + access
+    const base = await pool.query(
+      `
+      SELECT a.id, a.user_id, a.status
+      FROM ads a
+      WHERE a.id = $1
+      LIMIT 1
+      `,
+      [adId]
+    );
+
+    if (!base.rowCount) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    const cur = base.rows[0];
+    const isOwner = viewerUserId && String(viewerUserId) === String(cur.user_id);
+
+    if (!isOwner && cur.status !== 'active') {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    // 2) find root (oldest parent)
+    const rootRes = await pool.query(
+      `
+      WITH RECURSIVE up AS (
+        SELECT id, parent_ad_id, replaced_by_ad_id, 0 AS depth
+        FROM ads
+        WHERE id = $1
+
+        UNION ALL
+
+        SELECT a.id, a.parent_ad_id, a.replaced_by_ad_id, up.depth + 1
+        FROM ads a
+        JOIN up ON up.parent_ad_id = a.id
+        WHERE up.depth < 50
+      )
+      SELECT id
+      FROM up
+      ORDER BY depth DESC
+      LIMIT 1
+      `,
+      [adId]
+    );
+
+    const rootId = rootRes.rows[0]?.id || adId;
+
+    // 3) walk forward from root by replaced_by_ad_id
+    const chainRes = await pool.query(
+      `
+      WITH RECURSIVE chain AS (
+        SELECT
+          a.id, a.user_id, a.location_id,
+          l.country, l.city, l.district,
+          a.title, a.description, a.price_cents,
+          a.status, a.created_at, a.published_at, a.stopped_at,
+          a.parent_ad_id, a.replaced_by_ad_id,
+          0 AS depth
+        FROM ads a
+        JOIN locations l ON l.id = a.location_id
+        WHERE a.id = $1
+
+        UNION ALL
+
+        SELECT
+          n.id, n.user_id, n.location_id,
+          l2.country, l2.city, l2.district,
+          n.title, n.description, n.price_cents,
+          n.status, n.created_at, n.published_at, n.stopped_at,
+          n.parent_ad_id, n.replaced_by_ad_id,
+          chain.depth + 1 AS depth
+        FROM ads n
+        JOIN locations l2 ON l2.id = n.location_id
+        JOIN chain ON chain.replaced_by_ad_id = n.id
+        WHERE chain.depth < 50
+      )
+      SELECT *
+      FROM chain
+      ORDER BY depth ASC
+      `,
+      [rootId]
+    );
+
+    const ids = chainRes.rows.map((r) => r.id);
+
+    // 4) photosCount + previewPhoto per id (single query)
+    const enrich = await pool.query(
+      `
+      SELECT
+        a.id,
+
+        p.id         AS "previewPhotoId",
+        p.file_path  AS "previewPhotoFilePath",
+        p.sort_order AS "previewPhotoSortOrder",
+
+        COALESCE(pc.photos_count, 0)::int AS "photosCount"
+      FROM ads a
+
+      LEFT JOIN LATERAL (
+        SELECT id, file_path, sort_order
+        FROM ad_photos
+        WHERE ad_id = a.id
+        ORDER BY sort_order ASC, created_at ASC
+        LIMIT 1
+      ) p ON true
+
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS photos_count
+        FROM ad_photos
+        WHERE ad_id = a.id
+      ) pc ON true
+
+      WHERE a.id = ANY($1::uuid[])
+      `,
+      [ids]
+    );
+
+    const byId = new Map(enrich.rows.map((r) => [r.id, r]));
+
+    const timeline = chainRes.rows.map((row) => {
+      const extra = byId.get(row.id) || {};
+      const previewPhoto = extra.previewPhotoId
+        ? { id: extra.previewPhotoId, filePath: extra.previewPhotoFilePath, sortOrder: extra.previewPhotoSortOrder }
+        : null;
+
+      return {
+        id: row.id,
+        status: row.status,
+        createdAt: row.created_at,
+        publishedAt: row.published_at,
+        stoppedAt: row.stopped_at,
+
+        parentAdId: row.parent_ad_id,
+        replacedByAdId: row.replaced_by_ad_id,
+
+        location: {
+          country: row.country,
+          city: row.city,
+          district: row.district
+        },
+
+        title: row.title,
+        description: row.description,
+        priceCents: row.price_cents,
+
+        photosCount: extra.photosCount ?? 0,
+        previewPhoto,
+
+        isCurrent: row.id === adId
+      };
+    });
+
+    return res.json({
+      data: {
+        rootAdId: rootId,
+        currentAdId: adId,
+        isOwner: Boolean(isOwner),
+        timeline
       }
     });
   } catch (err) {
@@ -835,10 +1052,7 @@ async function deletePhotoFromDraft(req, res) {
       return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
-    const del = await pool.query(
-      `DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`,
-      [photoId, adId]
-    );
+    const del = await pool.query(`DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`, [photoId, adId]);
     if (!del.rowCount) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'photo not found' });
     }
@@ -866,6 +1080,7 @@ async function deletePhotoFromDraft(req, res) {
 /**
  * PUT /api/ads/:id/photos/reorder
  * requires auth
+ * body: { items: [{ photoId, sortOrder }] }
  * MVP: only owner + only draft
  */
 async function reorderPhotosInDraft(req, res) {
@@ -906,16 +1121,12 @@ async function reorderPhotosInDraft(req, res) {
     }
 
     const ids = items.map((x) => String(x.photoId).trim());
-    const own = await client.query(
-      `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
-      [adId, ids]
-    );
+    const own = await client.query(`SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`, [adId, ids]);
     if (own.rowCount !== ids.length) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    // temporary shift to avoid UNIQUE(ad_id, sort_order) conflicts
     await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
 
     for (const it of items) {
@@ -963,6 +1174,7 @@ module.exports = {
   listMyAds,
   listFeed,
   getAdById,
+  getAdVersions,
   addPhotoToDraft,
   deletePhotoFromDraft,
   reorderPhotosInDraft
