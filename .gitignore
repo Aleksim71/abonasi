@@ -27,3 +27,8 @@ logs/
 # === Misc ===
 tmp/
 temp/
+
+# Backend envs
+backend/.env
+backend/.env.test
+backend/.env.local
