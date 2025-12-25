@@ -9,6 +9,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # ✅ ГЛАВНЫЙ ФИКС: env на уровне job (видно всем шагам)
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: abonasi_user
+      DB_PASSWORD: abonasi_pass
+      DB_NAME: abonasi_test
+      DATABASE_URL: postgres://abonasi_user:abonasi_pass@127.0.0.1:5432/abonasi_test
+      JWT_SECRET: test_secret
+      ACCESS_TOKEN_SECRET: test_secret
+      REFRESH_TOKEN_SECRET: test_secret
+
     services:
       postgres:
         image: postgres:16
@@ -42,18 +54,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Оставим .env.test (может пригодиться локально/в будущем),
-      # но на него больше НЕ полагаемся в CI.
+      # (опционально) оставляем .env.test для совместимости,
+      # но CI на него больше не зависит
       - name: Create .env.test (optional)
         run: |
           rm -f .env.test
           printf '%s\n' \
-            "DB_HOST=127.0.0.1" \
-            "DB_PORT=5432" \
-            "DB_USER=abonasi_user" \
-            "DB_PASSWORD=abonasi_pass" \
-            "DB_NAME=abonasi_test" \
+            "DB_HOST=${DB_HOST}" \
+            "DB_PORT=${DB_PORT}" \
+            "DB_USER=${DB_USER}" \
+            "DB_PASSWORD=${DB_PASSWORD}" \
+            "DB_NAME=${DB_NAME}" \
             > .env.test
+          echo "----- .env.test (debug) -----"
+          sed -n '1,20p' .env.test
 
       - name: Wait for Postgres
         run: |
@@ -64,18 +78,15 @@ jobs:
           echo "Postgres did not become ready in time" >&2
           exit 1
         env:
+          # pg_isready берёт пароль отсюда
           PGPASSWORD: abonasi_pass
 
-      # ✅ ГЛАВНЫЙ ФИКС: даём DB_* напрямую через env шага
+      - name: Debug env (must include DB_HOST)
+        run: |
+          echo "DB_HOST=$DB_HOST"
+          echo "DB_PORT=$DB_PORT"
+          echo "DB_USER=$DB_USER"
+          echo "DB_NAME=$DB_NAME"
+
       - name: Run tests
         run: npm test
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: "5432"
-          DB_USER: abonasi_user
-          DB_PASSWORD: abonasi_pass
-          DB_NAME: abonasi_test
-          DATABASE_URL: postgres://abonasi_user:abonasi_pass@127.0.0.1:5432/abonasi_test
-          JWT_SECRET: test_secret
-          ACCESS_TOKEN_SECRET: test_secret
-          REFRESH_TOKEN_SECRET: test_secret
