@@ -9,7 +9,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    # ✅ env на уровне job: гарантированно попадёт во все шаги и в npm test
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
@@ -57,21 +56,28 @@ jobs:
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
-            pg_isready -h 127.0.0.1 -p 5432 -U abonasi_user -d abonasi_test && exit 0
+            pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" && exit 0
             sleep 1
           done
           echo "Postgres did not become ready in time" >&2
           exit 1
         env:
-          PGPASSWORD: abonasi_pass
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
 
-      # ✅ Debug: увидим в логах, что переменные реально есть
-      - name: Debug env
+      - name: Apply DB schema + seed
         run: |
-          echo "DB_HOST=$DB_HOST"
-          echo "DB_PORT=$DB_PORT"
-          echo "DB_USER=$DB_USER"
-          echo "DB_NAME=$DB_NAME"
+          set -euo pipefail
+          echo "==> Apply schema"
+          psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f ./sql/DB_SCHEMA.sql
+
+          echo "==> Apply seed_locations"
+          psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f ./sql/seed_locations.sql
+
+          echo "==> Tables:"
+          psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\dt"
+
+        env:
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
 
       - name: Run tests
         run: npm test
