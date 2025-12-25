@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: abonasi_user
+          POSTGRES_PASSWORD: abonasi_pass
+          POSTGRES_DB: abonasi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U abonasi_user -d abonasi_test"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create .env.test for CI
+        run: |
+          cat > .env.test <<'EOF'
+          # DB (CI)
+          PGHOST=127.0.0.1
+          PGPORT=5432
+          PGUSER=abonasi_user
+          PGPASSWORD=abonasi_pass
+          PGDATABASE=abonasi_test
+
+          # Optional: many projects use DATABASE_URL
+          DATABASE_URL=postgres://abonasi_user:abonasi_pass@127.0.0.1:5432/abonasi_test
+
+          # Auth (set to whatever your code expects; harmless extras)
+          JWT_SECRET=test_secret
+          ACCESS_TOKEN_SECRET=test_secret
+          REFRESH_TOKEN_SECRET=test_secret
+          EOF
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h 127.0.0.1 -p 5432 -U abonasi_user -d abonasi_test && exit 0
+            sleep 1
+          done
+          echo "Postgres did not become ready in time" >&2
+          exit 1
+        env:
+          PGPASSWORD: abonasi_pass
+
+      - name: Run tests
+        run: npm test

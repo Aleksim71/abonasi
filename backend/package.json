@@ -4,12 +4,14 @@
   "private": true,
   "type": "commonjs",
   "main": "src/server.js",
-  "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "lint": "echo \"(lint later)\"",
-    "test": "echo \"(tests later)\""
-  },
+ "scripts": {
+  "start": "node src/server.js",
+  "dev": "nodemon src/server.js",
+  "lint": "echo \"(lint later)\"",
+  "test": "dotenv_config_path=.env.test node -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand --detectOpenHandles --forceExit",
+  "test:watch": "dotenv_config_path=.env.test node -r dotenv/config ./node_modules/jest/bin/jest.js --watch --runInBand"
+},
+
   "dependencies": {
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
