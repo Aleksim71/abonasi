@@ -42,17 +42,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create .env.test for CI
+      - name: Create .env.test for CI (match src/config/db.js)
         run: |
           cat > .env.test <<'EOF'
-          # DB (CI)
-          PGHOST=127.0.0.1
-          PGPORT=5432
-          PGUSER=abonasi_user
-          PGPASSWORD=abonasi_pass
-          PGDATABASE=abonasi_test
+          # DB (required by src/config/db.js)
+          DB_HOST=127.0.0.1
+          DB_PORT=5432
+          DB_USER=abonasi_user
+          DB_PASSWORD=abonasi_pass
+          DB_NAME=abonasi_test
 
-          # Optional: many projects use DATABASE_URL
+          # Optional extras (harmless if unused)
           DATABASE_URL=postgres://abonasi_user:abonasi_pass@127.0.0.1:5432/abonasi_test
 
           # Auth (set to whatever your code expects; harmless extras)
