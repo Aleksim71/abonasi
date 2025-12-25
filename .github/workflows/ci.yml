@@ -9,7 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    # ✅ ГЛАВНЫЙ ФИКС: env на уровне job (видно всем шагам)
+    # ✅ env на уровне job: гарантированно попадёт во все шаги и в npm test
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
@@ -54,21 +54,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # (опционально) оставляем .env.test для совместимости,
-      # но CI на него больше не зависит
-      - name: Create .env.test (optional)
-        run: |
-          rm -f .env.test
-          printf '%s\n' \
-            "DB_HOST=${DB_HOST}" \
-            "DB_PORT=${DB_PORT}" \
-            "DB_USER=${DB_USER}" \
-            "DB_PASSWORD=${DB_PASSWORD}" \
-            "DB_NAME=${DB_NAME}" \
-            > .env.test
-          echo "----- .env.test (debug) -----"
-          sed -n '1,20p' .env.test
-
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
@@ -78,10 +63,10 @@ jobs:
           echo "Postgres did not become ready in time" >&2
           exit 1
         env:
-          # pg_isready берёт пароль отсюда
           PGPASSWORD: abonasi_pass
 
-      - name: Debug env (must include DB_HOST)
+      # ✅ Debug: увидим в логах, что переменные реально есть
+      - name: Debug env
         run: |
           echo "DB_HOST=$DB_HOST"
           echo "DB_PORT=$DB_PORT"
