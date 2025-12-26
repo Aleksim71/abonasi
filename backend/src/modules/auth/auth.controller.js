@@ -2,12 +2,14 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { pool }  = require('../../config/db');
+const { pool } = require('../../config/db');
 
 const SALT_ROUNDS = 12;
 
 function normalizeEmail(email) {
-  return String(email || '').trim().toLowerCase();
+  return String(email || '')
+    .trim()
+    .toLowerCase();
 }
 
 function signToken(user) {
@@ -16,11 +18,7 @@ function signToken(user) {
 
   const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
 
-  return jwt.sign(
-    { email: user.email, name: user.name },
-    secret,
-    { subject: user.id, expiresIn }
-  );
+  return jwt.sign({ email: user.email, name: user.name }, secret, { subject: user.id, expiresIn });
 }
 
 /**
@@ -33,11 +31,15 @@ async function register(req, res) {
   const name = String(req.body.name || '').trim();
 
   if (!email || !password || !name) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'email, password, name are required' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'email, password, name are required' });
   }
 
   if (password.length < 8) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'password must be at least 8 chars' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'password must be at least 8 chars' });
   }
 
   try {
@@ -74,7 +76,9 @@ async function login(req, res) {
   const password = String(req.body.password || '');
 
   if (!email || !password) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'email and password are required' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'email and password are required' });
   }
 
   try {
@@ -82,7 +86,6 @@ async function login(req, res) {
       `SELECT id, email, name, password_hash FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
-
 
     if (r.rowCount === 0) {
       return res.status(401).json({ error: 'UNAUTHORIZED', message: 'invalid credentials' });

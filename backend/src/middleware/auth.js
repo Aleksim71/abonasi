@@ -15,6 +15,7 @@ function requireAuth(req, res, next) {
     req.user = { id: payload.sub, email: payload.email, name: payload.name };
     return next();
   } catch (err) {
+    console.warn('JWT error:', err.message);
     return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid token' });
   }
 }

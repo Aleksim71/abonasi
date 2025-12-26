@@ -50,9 +50,7 @@ async function listLocations(req, res) {
  */
 async function listCountries(req, res) {
   try {
-    const r = await pool.query(
-      `SELECT DISTINCT country FROM locations ORDER BY country ASC`
-    );
+    const r = await pool.query(`SELECT DISTINCT country FROM locations ORDER BY country ASC`);
     res.json(r.rows.map((x) => x.country));
   } catch (err) {
     res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
@@ -65,7 +63,8 @@ async function listCountries(req, res) {
  */
 async function listCities(req, res) {
   const { country } = req.query;
-  if (!country) return res.status(400).json({ error: 'BAD_REQUEST', message: 'country is required' });
+  if (!country)
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'country is required' });
 
   try {
     const r = await pool.query(

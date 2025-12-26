@@ -30,7 +30,6 @@ router.get('/health', async (req, res) => {
   }
 });
 
-
 router.use('/locations', locationsRoutes);
 router.use('/auth', authRoutes);
 router.use('/ads', adsRoutes);
