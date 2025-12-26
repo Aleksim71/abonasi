@@ -4,14 +4,13 @@
   "private": true,
   "type": "commonjs",
   "main": "src/server.js",
- "scripts": {
-  "start": "node src/server.js",
-  "dev": "nodemon src/server.js",
-  "lint": "echo \"(lint later)\"",
-  "test": "dotenv_config_path=.env.test node -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand --detectOpenHandles --forceExit",
-  "test:watch": "dotenv_config_path=.env.test node -r dotenv/config ./node_modules/jest/bin/jest.js --watch --runInBand"
-},
-
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "dotenv_config_path=.env.test node -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand --detectOpenHandles --forceExit"
+  },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
@@ -21,8 +20,12 @@
     "pg": "^8.12.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
     "jest": "^30.2.0",
     "nodemon": "^3.1.4",
+    "prettier": "^3.7.4",
     "supertest": "^7.1.4"
   }
 }

@@ -69,7 +69,10 @@ describe('Ads fork workflow (integration)', () => {
     expect(forkActiveRes.body?.data?.newStatus).toBe('active');
 
     // E) stop new active
-    const stoppedRes = await withAuth(request(app).post(`/api/ads/${newActiveId}/stop`), token).expect(200);
+    const stoppedRes = await withAuth(
+      request(app).post(`/api/ads/${newActiveId}/stop`),
+      token
+    ).expect(200);
     expect(stoppedRes.body?.status).toBe('stopped');
 
     // F) PATCH stopped -> fork (must create NEW DRAFT)
@@ -85,7 +88,10 @@ describe('Ads fork workflow (integration)', () => {
     expect(forkStoppedRes.body?.data?.newStatus).toBe('draft');
 
     // G) versions timeline from latest draft
-    const versionsRes = await withAuth(request(app).get(`/api/ads/${newDraftId}/versions`), token).expect(200);
+    const versionsRes = await withAuth(
+      request(app).get(`/api/ads/${newDraftId}/versions`),
+      token
+    ).expect(200);
 
     const data = versionsRes.body?.data;
     expect(data?.isOwner).toBe(true);

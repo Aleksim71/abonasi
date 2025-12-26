@@ -43,7 +43,10 @@ describe('DB trigger ads_prevent_update_non_draft (integration)', () => {
     );
 
     // add a photo (not required for trigger, but harmless)
-    await pool.query(`INSERT INTO ad_photos (ad_id, file_path, sort_order) VALUES ($1,'uploads/x.jpg',0)`, [adId]);
+    await pool.query(
+      `INSERT INTO ad_photos (ad_id, file_path, sort_order) VALUES ($1,'uploads/x.jpg',0)`,
+      [adId]
+    );
   });
 
   afterAll(async () => {

@@ -21,7 +21,8 @@ function optionalAuth(req, _res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const userId = payload.sub || payload.userId || payload.id;
     req.user = userId ? { id: userId } : null;
-  } catch (_e) {
+  } catch (err) {
+    console.warn('Error:', err.message);
     req.user = null;
   }
 

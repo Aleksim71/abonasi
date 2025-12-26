@@ -2,7 +2,6 @@
 
 const { pool } = require('../../config/db');
 
-
 function isUuid(v) {
   return (
     typeof v === 'string' &&
@@ -17,20 +16,23 @@ function toInt(v, def) {
 
 function validateTitle(title) {
   const t = String(title || '').trim();
-  if (t.length < 3 || t.length > 120) return { ok: false, value: t, message: 'title must be 3..120 chars' };
+  if (t.length < 3 || t.length > 120)
+    return { ok: false, value: t, message: 'title must be 3..120 chars' };
   return { ok: true, value: t };
 }
 
 function validateDescription(description) {
   const d = String(description || '').trim();
-  if (d.length < 10 || d.length > 5000) return { ok: false, value: d, message: 'description must be 10..5000 chars' };
+  if (d.length < 10 || d.length > 5000)
+    return { ok: false, value: d, message: 'description must be 10..5000 chars' };
   return { ok: true, value: d };
 }
 
 function validatePriceCents(v) {
   if (v === null) return { ok: true, value: null };
   if (v === undefined) return { ok: true, value: undefined };
-  if (!Number.isInteger(v) || v < 0) return { ok: false, value: v, message: 'priceCents must be integer >= 0 or null' };
+  if (!Number.isInteger(v) || v < 0)
+    return { ok: false, value: v, message: 'priceCents must be integer >= 0 or null' };
   return { ok: true, value: v };
 }
 
@@ -166,7 +168,9 @@ async function updateAd(req, res) {
       const vt = validateTitle(patch.title);
       if (!vt.ok) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing title' });
+        return res
+          .status(409)
+          .json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing title' });
       }
       patch.title = vt.value;
     }
@@ -182,7 +186,9 @@ async function updateAd(req, res) {
       const vd = validateDescription(patch.description);
       if (!vd.ok) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing description' });
+        return res
+          .status(409)
+          .json({ error: 'NOT_ALLOWED', message: 'cannot edit: invalid existing description' });
       }
       patch.description = vd.value;
     }
@@ -215,7 +221,9 @@ async function updateAd(req, res) {
 
       if (!r.rowCount) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+        return res
+          .status(409)
+          .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
       }
 
       await client.query('COMMIT');
@@ -231,7 +239,10 @@ async function updateAd(req, res) {
     await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
 
     if (forkTargetStatus === 'active') {
-      const photosCnt = await client.query(`SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`, [adId]);
+      const photosCnt = await client.query(
+        `SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`,
+        [adId]
+      );
       if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
         await client.query('ROLLBACK');
         return res.status(409).json({
@@ -257,7 +268,15 @@ async function updateAd(req, res) {
       )
       RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
-      [userId, patch.location_id, patch.title, patch.description, patch.price_cents, forkTargetStatus, adId]
+      [
+        userId,
+        patch.location_id,
+        patch.title,
+        patch.description,
+        patch.price_cents,
+        forkTargetStatus,
+        adId
+      ]
     );
 
     const newAd = ins.rows[0];
@@ -327,7 +346,9 @@ async function updateAd(req, res) {
   } catch (err) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch {
+      // ignore rollback error
+    }
 
     if (err && err.code === '23503') {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
@@ -504,7 +525,9 @@ async function stopAd(req, res) {
   } catch (err) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch {
+      // ignore rollback error
+    }
 
     if (err && err.code === '45000') {
       return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
@@ -904,7 +927,11 @@ async function getAdVersions(req, res) {
     const timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
       const previewPhoto = extra.previewPhotoId
-        ? { id: extra.previewPhotoId, filePath: extra.previewPhotoFilePath, sortOrder: extra.previewPhotoSortOrder }
+        ? {
+            id: extra.previewPhotoId,
+            filePath: extra.previewPhotoFilePath,
+            sortOrder: extra.previewPhotoSortOrder
+          }
         : null;
 
       return {
@@ -967,7 +994,9 @@ async function addPhotoToDraft(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'filePath must be 3..500 chars' });
   }
   if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 50) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'sortOrder must be integer 0..50' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'sortOrder must be integer 0..50' });
   }
 
   try {
@@ -1049,10 +1078,15 @@ async function deletePhotoFromDraft(req, res) {
       [adId, userId]
     );
     if (!adCheck.rowCount) {
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+      return res
+        .status(409)
+        .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
-    const del = await pool.query(`DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`, [photoId, adId]);
+    const del = await pool.query(
+      `DELETE FROM ad_photos WHERE id = $1 AND ad_id = $2 RETURNING id`,
+      [photoId, adId]
+    );
     if (!del.rowCount) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'photo not found' });
     }
@@ -1092,7 +1126,9 @@ async function reorderPhotosInDraft(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
+    return res
+      .status(400)
+      .json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
   }
 
   for (const it of items) {
@@ -1100,10 +1136,14 @@ async function reorderPhotosInDraft(req, res) {
     const sortOrder = Number(it?.sortOrder);
 
     if (!isUuid(photoId)) {
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'each item.photoId must be UUID' });
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'each item.photoId must be UUID' });
     }
     if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 50) {
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'each item.sortOrder must be integer 0..50' });
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'each item.sortOrder must be integer 0..50' });
     }
   }
 
@@ -1117,17 +1157,26 @@ async function reorderPhotosInDraft(req, res) {
     );
     if (!adCheck.rowCount) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+      return res
+        .status(409)
+        .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
     const ids = items.map((x) => String(x.photoId).trim());
-    const own = await client.query(`SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`, [adId, ids]);
+    const own = await client.query(
+      `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
+      [adId, ids]
+    );
     if (own.rowCount !== ids.length) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
+    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [
+      adId
+    ]);
 
     for (const it of items) {
       await client.query(`UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`, [
@@ -1157,7 +1206,9 @@ async function reorderPhotosInDraft(req, res) {
   } catch (err) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch {
+      // ignore rollback error
+    }
 
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
   } finally {
