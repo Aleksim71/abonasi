@@ -45,8 +45,8 @@ function deepFindByKeys(root, keys) {
  * - call GET /api/ads/:id
  * - extract price field from anywhere in response (priceCents or price_cents)
  */
-async function fetchPriceFromApi(app, token, adId) {
-  const res = await withAuth(request(app).get(`/api/ads/${adId}`), token).expect(200);
+async function fetchPriceFromApi(appInstance, token, adId) {
+  const res = await withAuth(request(appInstance).get(`/api/ads/${adId}`), token).expect(200);
   const body = res.body ?? {};
   const price = deepFindByKeys(body, ['priceCents', 'price_cents']);
   return { res, body, price };
@@ -122,16 +122,14 @@ describe('Ads fork workflow (integration)', () => {
     expect(forkActiveRes.body?.data?.newStatus).toBe('active');
 
     // ✅ verify normalized value via GET (DTO-agnostic)
-    const { price: activePrice, body: activeGetBody } = await fetchPriceFromApi(app, token, newActiveId);
-    if (activePrice === undefined) {
-      // helpful debug without breaking other assertions context
-      // eslint-disable-next-line no-console
-      console.log('DEBUG: GET /api/ads/:id response does not contain priceCents/price_cents:', activeGetBody);
-    }
+    const { price: activePrice } = await fetchPriceFromApi(app, token, newActiveId);
     expect(activePrice).toBe(1200);
 
     // E) stop new active
-    const stoppedRes = await withAuth(request(app).post(`/api/ads/${newActiveId}/stop`), token).expect(200);
+    const stoppedRes = await withAuth(
+      request(app).post(`/api/ads/${newActiveId}/stop`),
+      token
+    ).expect(200);
     expect(stoppedRes.body?.status).toBe('stopped');
 
     // F) PATCH stopped -> fork (must create NEW DRAFT)
@@ -152,15 +150,14 @@ describe('Ads fork workflow (integration)', () => {
     expect(forkStoppedRes.body?.data?.newStatus).toBe('draft');
 
     // ✅ verify normalized null via GET (DTO-agnostic)
-    const { price: draftPrice, body: draftGetBody } = await fetchPriceFromApi(app, token, newDraftId);
-    if (draftPrice === undefined) {
-      // eslint-disable-next-line no-console
-      console.log('DEBUG: GET /api/ads/:id response does not contain priceCents/price_cents:', draftGetBody);
-    }
+    const { price: draftPrice } = await fetchPriceFromApi(app, token, newDraftId);
     expect(draftPrice).toBe(null);
 
     // G) versions timeline from latest draft
-    const versionsRes = await withAuth(request(app).get(`/api/ads/${newDraftId}/versions`), token).expect(200);
+    const versionsRes = await withAuth(
+      request(app).get(`/api/ads/${newDraftId}/versions`),
+      token
+    ).expect(200);
 
     const data = versionsRes.body?.data;
     expect(data?.isOwner).toBe(true);
@@ -214,11 +211,7 @@ describe('Ads fork workflow (integration)', () => {
       .send({ priceCents: 0 })
       .expect(200);
 
-    const { price: afterZero, body: afterZeroBody } = await fetchPriceFromApi(app, token, draftId);
-    if (afterZero === undefined) {
-      // eslint-disable-next-line no-console
-      console.log('DEBUG: GET /api/ads/:id response does not contain priceCents/price_cents:', afterZeroBody);
-    }
+    const { price: afterZero } = await fetchPriceFromApi(app, token, draftId);
     expect(afterZero).toBe(0);
 
     // D) PATCH draft: priceCents = null must remain null
@@ -229,11 +222,7 @@ describe('Ads fork workflow (integration)', () => {
       .send({ priceCents: null })
       .expect(200);
 
-    const { price: afterNull, body: afterNullBody } = await fetchPriceFromApi(app, token, draftId);
-    if (afterNull === undefined) {
-      // eslint-disable-next-line no-console
-      console.log('DEBUG: GET /api/ads/:id response does not contain priceCents/price_cents:', afterNullBody);
-    }
+    const { price: afterNull } = await fetchPriceFromApi(app, token, draftId);
     expect(afterNull).toBe(null);
   });
 });
