@@ -193,8 +193,18 @@ async function updateAd(req, res) {
       patch.description = vd.value;
     }
 
+    // ✅ A) normalize priceCents: allow "", null, "123"
     if (req.body.priceCents !== undefined) {
-      const vp = validatePriceCents(req.body.priceCents);
+      const raw = req.body.priceCents;
+
+      const normalized =
+        raw === null || raw === ''
+          ? null
+          : typeof raw === 'string'
+            ? Number(raw)
+            : raw;
+
+      const vp = validatePriceCents(normalized);
       if (!vp.ok) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'BAD_REQUEST', message: vp.message });
