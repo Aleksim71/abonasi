@@ -193,8 +193,18 @@ async function updateAd(req, res) {
       patch.description = vd.value;
     }
 
+    // ✅ A) normalize priceCents: allow "", null, "123"
     if (req.body.priceCents !== undefined) {
-      const vp = validatePriceCents(req.body.priceCents);
+      const raw = req.body.priceCents;
+
+      const normalized =
+        raw === null || raw === ''
+          ? null
+          : typeof raw === 'string'
+            ? Number(raw)
+            : raw;
+
+      const vp = validatePriceCents(normalized);
       if (!vp.ok) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'BAD_REQUEST', message: vp.message });
@@ -795,6 +805,11 @@ async function getAdById(req, res) {
  * - owner: any status
  *
  * returns timeline: oldest-parent ... current ... replaced chain
+ *
+ * ✅ Timeline UX additions:
+ * - data.latestPublishedAdId
+ * - timeline[].isLatestPublished
+ * - public (non-owner): timeline filtered to active only (no draft/stopped leak)
  */
 async function getAdVersions(req, res) {
   const adId = String(req.params.id || '').trim();
@@ -924,7 +939,11 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    const timeline = chainRes.rows.map((row) => {
+    // ✅ find latest published (last active in chain)
+    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.status === 'active') || null;
+    const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
+
+    let timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
       const previewPhoto = extra.previewPhotoId
         ? {
@@ -957,15 +976,27 @@ async function getAdVersions(req, res) {
         photosCount: extra.photosCount ?? 0,
         previewPhoto,
 
-        isCurrent: row.id === adId
+        isCurrent: row.id === adId,
+
+        // ✅ UX marker
+        isLatestPublished: latestPublishedAdId ? row.id === latestPublishedAdId : false
       };
     });
+
+    // ✅ public: show only active versions (no draft/stopped leak)
+    if (!isOwner) {
+      timeline = timeline.filter((v) => v.status === 'active');
+    }
 
     return res.json({
       data: {
         rootAdId: rootId,
         currentAdId: adId,
         isOwner: Boolean(isOwner),
+
+        // ✅ UX addition
+        latestPublishedAdId,
+
         timeline
       }
     });
