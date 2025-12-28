@@ -5,9 +5,9 @@ const { resetDb, ensureTestLocation, closeDb } = require('./helpers/db');
 const { request, withAuth, registerAndLogin } = require('./helpers/http');
 
 describe('Ads versions timeline UX (integration)', () => {
-  let ownerToken;
-  let viewerToken;
   let locationId;
+  let ownerToken;
+  let otherToken;
 
   beforeAll(async () => {
     await resetDb();
@@ -16,15 +16,15 @@ describe('Ads versions timeline UX (integration)', () => {
     const stamp = Date.now();
 
     ownerToken = await registerAndLogin(app, {
-      email: `jest_owner_${stamp}@example.com`,
+      email: `owner_${stamp}@example.com`,
       password: 'password123',
-      name: 'Owner User'
+      name: 'Owner'
     });
 
-    viewerToken = await registerAndLogin(app, {
-      email: `jest_viewer_${stamp}@example.com`,
+    otherToken = await registerAndLogin(app, {
+      email: `other_${stamp}@example.com`,
       password: 'password123',
-      name: 'Viewer User'
+      name: 'Other'
     });
   });
 
@@ -32,7 +32,7 @@ describe('Ads versions timeline UX (integration)', () => {
     await closeDb();
   });
 
-  test('owner versions: latestPublishedAdId + exactly one isLatestPublished=true', async () => {
+  test('owner versions: latestPublishedAdId + currentPublishedAdId markers', async () => {
     // 1) create draft
     const createRes = await withAuth(
       request(app).post('/api/ads').set('Content-Type', 'application/json'),
@@ -57,10 +57,10 @@ describe('Ads versions timeline UX (integration)', () => {
       .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
       .expect(201);
 
-    // 3) publish -> active (same id becomes active)
+    // 3) publish -> active
     await withAuth(request(app).post(`/api/ads/${draftId}/publish`), ownerToken).expect(200);
 
-    // 4) patch active -> fork active (new active, old becomes stopped)
+    // 4) edit active -> fork active (newActive) + old stopped
     const forkActiveRes = await withAuth(
       request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
       ownerToken
@@ -68,7 +68,7 @@ describe('Ads versions timeline UX (integration)', () => {
       .send({
         title: 'Versions owner (EDIT)',
         description: 'Versions owner edited description 1234567890',
-        priceCents: '1200'
+        priceCents: 1200
       })
       .expect(200);
 
@@ -76,10 +76,10 @@ describe('Ads versions timeline UX (integration)', () => {
     expect(newActiveId).toMatch(/[0-9a-f-]{36}/i);
     expect(forkActiveRes.body?.data?.newStatus).toBe('active');
 
-    // 5) stop new active -> stopped
+    // 5) stop new active
     await withAuth(request(app).post(`/api/ads/${newActiveId}/stop`), ownerToken).expect(200);
 
-    // 6) patch stopped -> fork draft (new draft)
+    // 6) edit stopped -> fork draft (newDraft)
     const forkStoppedRes = await withAuth(
       request(app).patch(`/api/ads/${newActiveId}`).set('Content-Type', 'application/json'),
       ownerToken
@@ -87,7 +87,7 @@ describe('Ads versions timeline UX (integration)', () => {
       .send({
         title: 'Stopped -> edit',
         description: 'Stopped -> edit description 1234567890',
-        priceCents: ''
+        priceCents: null
       })
       .expect(200);
 
@@ -102,31 +102,36 @@ describe('Ads versions timeline UX (integration)', () => {
     ).expect(200);
 
     const data = versionsRes.body?.data;
+
     expect(data?.isOwner).toBe(true);
     expect(data?.currentAdId).toBe(newDraftId);
 
-    // ✅ New UX fields
+    // UX fields
     expect(data?.latestPublishedAdId).toMatch(/[0-9a-f-]{36}/i);
+    // there is no active now, so currentPublishedAdId must be null
+    expect(data?.currentPublishedAdId).toBe(null);
 
     expect(Array.isArray(data?.timeline)).toBe(true);
     expect(data.timeline.length).toBeGreaterThanOrEqual(3);
 
+    // current marker
     const cur = data.timeline.find((x) => x.isCurrent);
     expect(cur?.id).toBe(newDraftId);
 
     // exactly one latest-published marker
     const latestMarked = data.timeline.filter((x) => x.isLatestPublished === true);
     expect(latestMarked.length).toBe(1);
+    expect(latestMarked[0]?.id).toBe(data.latestPublishedAdId);
+    expect(latestMarked[0]?.publishedAt).toBeTruthy();
 
-    const latest = latestMarked[0];
-
-    // ✅ Owner: latestPublished = last ever published (publishedAt != null), can be stopped now
-    expect(latest?.id).toBe(data.latestPublishedAdId);
-    expect(latest?.publishedAt).toBeTruthy();
+    // no currentPublished markers if no active exists
+    const currentPubMarked = data.timeline.filter((x) => x.isCurrentPublished === true);
+    expect(currentPubMarked.length).toBe(0);
   });
 
   test('non-owner versions: allowed only for active + timeline must not leak draft/stopped', async () => {
     // Build a chain but keep the current one ACTIVE for public view.
+
     // 1) create draft
     const createRes = await withAuth(
       request(app).post('/api/ads').set('Content-Type', 'application/json'),
@@ -154,7 +159,7 @@ describe('Ads versions timeline UX (integration)', () => {
     // 3) publish -> active
     await withAuth(request(app).post(`/api/ads/${draftId}/publish`), ownerToken).expect(200);
 
-    // 4) fork active -> new active (keep it active; do NOT stop it)
+    // 4) edit active -> fork active (newActive) + old stopped
     const forkActiveRes = await withAuth(
       request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
       ownerToken
@@ -162,7 +167,7 @@ describe('Ads versions timeline UX (integration)', () => {
       .send({
         title: 'Versions public (EDIT)',
         description: 'Versions public edited description 1234567890',
-        priceCents: 600
+        priceCents: 700
       })
       .expect(200);
 
@@ -170,28 +175,52 @@ describe('Ads versions timeline UX (integration)', () => {
     expect(newActiveId).toMatch(/[0-9a-f-]{36}/i);
     expect(forkActiveRes.body?.data?.newStatus).toBe('active');
 
-    // 5) non-owner requests versions for ACTIVE ad
+    // 5) public versions доступен только для active
     const versionsRes = await withAuth(
       request(app).get(`/api/ads/${newActiveId}/versions`),
-      viewerToken
+      otherToken
     ).expect(200);
 
     const data = versionsRes.body?.data;
-
     expect(data?.isOwner).toBe(false);
-    expect(data?.currentAdId).toBe(newActiveId);
 
+    // public should see active-only timeline
     expect(Array.isArray(data?.timeline)).toBe(true);
     expect(data.timeline.length).toBeGreaterThanOrEqual(1);
 
-    // ✅ public must not see drafts/stopped
     for (const v of data.timeline) {
       expect(v.status).toBe('active');
     }
 
-    // ✅ latestPublishedAdId should exist and point to an active in public view
+    // public markers: currentPublished exists and must be active
+    expect(data?.currentPublishedAdId).toMatch(/[0-9a-f-]{36}/i);
+    const currentPub = data.timeline.find((x) => x.isCurrentPublished === true);
+    expect(currentPub?.id).toBe(data.currentPublishedAdId);
+    expect(currentPub?.status).toBe('active');
+
+    // latestPublished exists too (could equal currentPublished in public case)
     expect(data?.latestPublishedAdId).toMatch(/[0-9a-f-]{36}/i);
-    const latest = data.timeline.find((x) => x.id === data.latestPublishedAdId);
-    expect(latest?.status).toBe('active');
+    const latestMarked = data.timeline.filter((x) => x.isLatestPublished === true);
+    expect(latestMarked.length).toBe(1);
+  });
+
+  test('non-owner versions: 404 for non-active ad', async () => {
+    // create a draft and try to access versions as non-owner -> 404
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Versions private',
+        description: 'Versions private description 1234567890',
+        priceCents: 100
+      })
+      .expect(201);
+
+    const draftId = createRes.body?.id;
+    expect(draftId).toMatch(/[0-9a-f-]{36}/i);
+
+    await withAuth(request(app).get(`/api/ads/${draftId}/versions`), otherToken).expect(404);
   });
 });

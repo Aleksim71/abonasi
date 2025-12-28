@@ -807,8 +807,10 @@ async function getAdById(req, res) {
  * returns timeline: oldest-parent ... current ... replaced chain
  *
  * ✅ Timeline UX additions:
- * - data.latestPublishedAdId
+ * - data.latestPublishedAdId (last ever published; publishedAt != null; may be stopped)
+ * - data.currentPublishedAdId (current active in chain; public-visible)
  * - timeline[].isLatestPublished
+ * - timeline[].isCurrentPublished
  * - public (non-owner): timeline filtered to active only (no draft/stopped leak)
  */
 async function getAdVersions(req, res) {
@@ -939,10 +941,15 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    // ✅ FIX: last ever published version (published_at not null), even if currently stopped
+    // ✅ latestPublished: last ever published (publishedAt != null), may be stopped now
     const latestPublishedRow =
       [...chainRes.rows].reverse().find((r) => r.published_at !== null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
+
+    // ✅ currentPublished: currently active in chain (public-visible)
+    const currentPublishedRow =
+      [...chainRes.rows].reverse().find((r) => r.status === 'active') || null;
+    const currentPublishedAdId = currentPublishedRow ? currentPublishedRow.id : null;
 
     let timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
@@ -979,8 +986,9 @@ async function getAdVersions(req, res) {
 
         isCurrent: row.id === adId,
 
-        // ✅ UX marker
-        isLatestPublished: latestPublishedAdId ? row.id === latestPublishedAdId : false
+        // ✅ UX markers
+        isLatestPublished: latestPublishedAdId ? row.id === latestPublishedAdId : false,
+        isCurrentPublished: currentPublishedAdId ? row.id === currentPublishedAdId : false
       };
     });
 
@@ -995,8 +1003,8 @@ async function getAdVersions(req, res) {
         currentAdId: adId,
         isOwner: Boolean(isOwner),
 
-        // ✅ UX addition
         latestPublishedAdId,
+        currentPublishedAdId,
 
         timeline
       }
