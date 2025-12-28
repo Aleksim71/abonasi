@@ -939,8 +939,9 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    // ✅ find latest published (last active in chain)
-    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.status === 'active') || null;
+    // ✅ FIX: last ever published version (published_at not null), even if currently stopped
+    const latestPublishedRow =
+      [...chainRes.rows].reverse().find((r) => r.published_at !== null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
 
     let timeline = chainRes.rows.map((row) => {

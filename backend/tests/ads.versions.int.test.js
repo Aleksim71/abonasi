@@ -119,8 +119,10 @@ describe('Ads versions timeline UX (integration)', () => {
     expect(latestMarked.length).toBe(1);
 
     const latest = latestMarked[0];
-    expect(latest?.status).toBe('active');
+
+    // ✅ Owner: latestPublished = last ever published (publishedAt != null), can be stopped now
     expect(latest?.id).toBe(data.latestPublishedAdId);
+    expect(latest?.publishedAt).toBeTruthy();
   });
 
   test('non-owner versions: allowed only for active + timeline must not leak draft/stopped', async () => {
@@ -187,7 +189,7 @@ describe('Ads versions timeline UX (integration)', () => {
       expect(v.status).toBe('active');
     }
 
-    // ✅ latestPublishedAdId should exist and point to an active
+    // ✅ latestPublishedAdId should exist and point to an active in public view
     expect(data?.latestPublishedAdId).toMatch(/[0-9a-f-]{36}/i);
     const latest = data.timeline.find((x) => x.id === data.latestPublishedAdId);
     expect(latest?.status).toBe('active');
