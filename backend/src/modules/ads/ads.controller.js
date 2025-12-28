@@ -564,7 +564,7 @@ async function restartAd(req, res) {
   try {
     const cur = await pool.query(
       `
-      SELECT id, status
+      SELECT id, status, replaced_by_ad_id
       FROM ads
       WHERE id = $1 AND user_id = $2
       LIMIT 1
@@ -582,6 +582,14 @@ async function restartAd(req, res) {
       return res.status(409).json({
         error: 'NOT_ALLOWED',
         message: 'only stopped ads can be restarted'
+      });
+    }
+
+    // ✅ D1 rule: stopped-but-replaced cannot be restarted
+    if (ad.replaced_by_ad_id) {
+      return res.status(409).json({
+        error: 'NOT_ALLOWED',
+        message: 'cannot restart: this ad was replaced'
       });
     }
 
@@ -804,11 +812,9 @@ async function getAdById(req, res) {
  * - public: only if this ad is active
  * - owner: any status
  *
- * returns timeline: oldest-parent ... current ... replaced chain
- *
  * ✅ Timeline UX additions:
- * - data.latestPublishedAdId (last ever published; publishedAt != null; may be stopped)
- * - data.currentPublishedAdId (current active in chain; public-visible)
+ * - data.latestPublishedAdId
+ * - data.currentPublishedAdId
  * - timeline[].isLatestPublished
  * - timeline[].isCurrentPublished
  * - public (non-owner): timeline filtered to active only (no draft/stopped leak)
@@ -941,15 +947,12 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    // ✅ latestPublished: last ever published (publishedAt != null), may be stopped now
-    const latestPublishedRow =
-      [...chainRes.rows].reverse().find((r) => r.published_at !== null) || null;
+    // ✅ latest published = last row with published_at != null
+    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.published_at != null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
 
-    // ✅ currentPublished: currently active in chain (public-visible)
-    const currentPublishedRow =
-      [...chainRes.rows].reverse().find((r) => r.status === 'active') || null;
-    const currentPublishedAdId = currentPublishedRow ? currentPublishedRow.id : null;
+    // ✅ current published = current ad if it is active, else null
+    const currentPublishedAdId = cur.status === 'active' ? cur.id : null;
 
     let timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
@@ -985,8 +988,6 @@ async function getAdVersions(req, res) {
         previewPhoto,
 
         isCurrent: row.id === adId,
-
-        // ✅ UX markers
         isLatestPublished: latestPublishedAdId ? row.id === latestPublishedAdId : false,
         isCurrentPublished: currentPublishedAdId ? row.id === currentPublishedAdId : false
       };
@@ -1002,10 +1003,8 @@ async function getAdVersions(req, res) {
         rootAdId: rootId,
         currentAdId: adId,
         isOwner: Boolean(isOwner),
-
         latestPublishedAdId,
         currentPublishedAdId,
-
         timeline
       }
     });

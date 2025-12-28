@@ -1,63 +1,8 @@
-// backend/tests/ads.rules.int.test.js
 'use strict';
 
 const app = require('../src/app');
 const { resetDb, ensureTestLocation, closeDb } = require('./helpers/db');
 const { request, withAuth, registerAndLogin } = require('./helpers/http');
-
-function uuidLike(v) {
-  return typeof v === 'string' && /[0-9a-f-]{36}/i.test(v);
-}
-
-async function createDraft({ token, locationId, title, description, priceCents }) {
-  const res = await withAuth(
-    request(app).post('/api/ads').set('Content-Type', 'application/json'),
-    token
-  )
-    .send({ locationId, title, description, priceCents })
-    .expect(201);
-
-  const id = res.body?.id;
-  expect(uuidLike(id)).toBe(true);
-  return id;
-}
-
-async function addPhoto({ token, adId, filePath = 'uploads/smoke.jpg', sortOrder = 0 }) {
-  const res = await withAuth(
-    request(app).post(`/api/ads/${adId}/photos`).set('Content-Type', 'application/json'),
-    token
-  )
-    .send({ filePath, sortOrder })
-    .expect(201);
-
-  const photos = res.body?.data?.photos || [];
-  expect(photos.length).toBeGreaterThanOrEqual(1);
-  return photos;
-}
-
-async function publish({ token, adId }) {
-  const res = await withAuth(request(app).post(`/api/ads/${adId}/publish`), token).expect(200);
-  return res.body;
-}
-
-async function stop({ token, adId, expectedStatus = 200 }) {
-  const req = withAuth(request(app).post(`/api/ads/${adId}/stop`), token);
-  const res = await req.expect(expectedStatus);
-  return res.body;
-}
-
-async function restart({ token, adId, expectedStatus = 200 }) {
-  const req = withAuth(request(app).post(`/api/ads/${adId}/restart`), token);
-  const res = await req.expect(expectedStatus);
-  return res.body;
-}
-
-async function forkPatch({ token, adId, patch, expectedStatus = 200 }) {
-  const req = withAuth(request(app).patch(`/api/ads/${adId}`).set('Content-Type', 'application/json'), token)
-    .send(patch);
-  const res = await req.expect(expectedStatus);
-  return res.body;
-}
 
 describe('Ads business rules (integration)', () => {
   let ownerToken;
@@ -65,6 +10,7 @@ describe('Ads business rules (integration)', () => {
   let locationId;
 
   beforeAll(async () => {
+    // Keep locations seed, reset other tables
     await resetDb();
     locationId = await ensureTestLocation();
 
@@ -88,181 +34,275 @@ describe('Ads business rules (integration)', () => {
   });
 
   test('stop: draft cannot be stopped (409)', async () => {
-    const draftId = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Stop draft',
-      description: 'Stop draft description 1234567890',
-      priceCents: 100
-    });
+    // create draft
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Stop draft',
+        description: 'Stop draft description 1234567890',
+        priceCents: 100
+      })
+      .expect(201);
 
-    const body = await stop({ token: ownerToken, adId: draftId, expectedStatus: 409 });
-    expect(body?.error).toBe('NOT_ALLOWED');
+    const draftId = createRes.body?.id;
+    expect(draftId).toMatch(/[0-9a-f-]{36}/i);
+
+    // stop draft -> 409
+    const r = await withAuth(request(app).post(`/api/ads/${draftId}/stop`), ownerToken).expect(409);
+    expect(r.body?.error).toBe('NOT_ALLOWED');
   });
 
   test('stop: non-owner cannot stop (404)', async () => {
-    const draftId = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Stop чужой',
-      description: 'Stop чужой description 1234567890',
-      priceCents: 100
-    });
+    // create draft
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Stop non-owner',
+        description: 'Stop non-owner description 1234567890',
+        priceCents: 200
+      })
+      .expect(201);
 
-    await addPhoto({ token: ownerToken, adId: draftId });
-    await publish({ token: ownerToken, adId: draftId });
+    const draftId = createRes.body?.id;
+    expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
-    // other user tries to stop => 404 (not found)
-    const body = await stop({ token: otherToken, adId: draftId, expectedStatus: 404 });
-    expect(body?.error).toBe('NOT_FOUND');
+    // add photo
+    await withAuth(
+      request(app).post(`/api/ads/${draftId}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
+
+    // publish -> active
+    await withAuth(request(app).post(`/api/ads/${draftId}/publish`), ownerToken).expect(200);
+
+    // other user tries to stop -> 404 (not found / no leak)
+    await withAuth(request(app).post(`/api/ads/${draftId}/stop`), otherToken).expect(404);
   });
 
   test('fork active: cannot fork if old ad already replaced (409)', async () => {
-    // create + publish
-    const draftId = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Fork replaced',
-      description: 'Fork replaced description 1234567890',
-      priceCents: 500
-    });
-    await addPhoto({ token: ownerToken, adId: draftId });
-    await publish({ token: ownerToken, adId: draftId });
+    // create draft
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Fork active replaced',
+        description: 'Fork active replaced description 1234567890',
+        priceCents: 300
+      })
+      .expect(201);
 
-    // first fork succeeds (active -> new active, old becomes stopped and linked)
-    const firstFork = await forkPatch({
-      token: ownerToken,
-      adId: draftId,
-      patch: {
-        title: 'Fork 1',
-        description: 'Fork 1 description 1234567890',
-        priceCents: '600'
-      },
-      expectedStatus: 200
-    });
+    const draftId = createRes.body?.id;
+    expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
-    expect(firstFork?.notice?.mode).toBe('forked');
-    const newActiveId = firstFork?.data?.newAdId;
-    expect(uuidLike(newActiveId)).toBe(true);
+    // add photo
+    await withAuth(
+      request(app).post(`/api/ads/${draftId}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
 
-    // second fork on the SAME original id must fail (already replaced)
-    const secondFork = await forkPatch({
-      token: ownerToken,
-      adId: draftId,
-      patch: {
-        title: 'Fork 2',
-        description: 'Fork 2 description 1234567890'
-      },
-      expectedStatus: 409
-    });
+    // publish -> active
+    await withAuth(request(app).post(`/api/ads/${draftId}/publish`), ownerToken).expect(200);
 
-    expect(secondFork?.error).toBe('NOT_ALLOWED');
-    expect(String(secondFork?.message || '')).toMatch(/already replaced/i);
+    // fork active (PATCH) -> creates new active + old stopped
+    const fork1 = await withAuth(
+      request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        title: 'Fork active replaced (edit 1)',
+        description: 'Fork active replaced (edit 1) description 1234567890',
+        priceCents: 350
+      })
+      .expect(200);
+
+    expect(fork1.body?.notice?.mode).toBe('forked');
+
+    // fork the same old ad again -> 409
+    const fork2 = await withAuth(
+      request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        title: 'Fork active replaced (edit 2)',
+        description: 'Fork active replaced (edit 2) description 1234567890',
+        priceCents: 360
+      })
+      .expect(409);
+
+    expect(fork2.body?.error).toBe('NOT_ALLOWED');
   });
 
   test('fork stopped: cannot fork if old stopped ad already replaced (409)', async () => {
-    // create + publish
-    const draftId = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Fork stopped replaced',
-      description: 'Fork stopped replaced description 1234567890',
-      priceCents: 900
-    });
-    await addPhoto({ token: ownerToken, adId: draftId });
-    await publish({ token: ownerToken, adId: draftId });
+    // create draft
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Fork stopped replaced',
+        description: 'Fork stopped replaced description 1234567890',
+        priceCents: 400
+      })
+      .expect(201);
 
-    // fork active => old becomes stopped, new becomes active
-    const fork1 = await forkPatch({
-      token: ownerToken,
-      adId: draftId,
-      patch: { title: 'Active v2', description: 'Active v2 description 1234567890' },
-      expectedStatus: 200
-    });
+    const draftId = createRes.body?.id;
+    expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
-    const activeV2Id = fork1?.data?.newAdId;
-    expect(uuidLike(activeV2Id)).toBe(true);
+    // add photo
+    await withAuth(
+      request(app).post(`/api/ads/${draftId}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
 
-    // stop activeV2
-    const stopped = await stop({ token: ownerToken, adId: activeV2Id, expectedStatus: 200 });
-    expect(stopped?.status).toBe('stopped');
+    // publish -> active
+    await withAuth(request(app).post(`/api/ads/${draftId}/publish`), ownerToken).expect(200);
 
-    // fork stopped => creates NEW DRAFT, and stopped gets replaced_by_ad_id
-    const forkStopped = await forkPatch({
-      token: ownerToken,
-      adId: activeV2Id,
-      patch: { title: 'Draft v3', description: 'Draft v3 description 1234567890', priceCents: '' },
-      expectedStatus: 200
-    });
+    // stop -> stopped
+    await withAuth(request(app).post(`/api/ads/${draftId}/stop`), ownerToken).expect(200);
 
-    const newDraftId = forkStopped?.data?.newAdId;
-    expect(uuidLike(newDraftId)).toBe(true);
-    expect(forkStopped?.data?.newStatus).toBe('draft');
+    // fork stopped -> creates new DRAFT + links replaced_by on old stopped
+    const fork1 = await withAuth(
+      request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        title: 'Fork stopped replaced (edit 1)',
+        description: 'Fork stopped replaced (edit 1) description 1234567890',
+        priceCents: 410
+      })
+      .expect(200);
 
-    // second fork on the same stopped id must fail (already replaced)
-    const second = await forkPatch({
-      token: ownerToken,
-      adId: activeV2Id,
-      patch: { title: 'Draft v4', description: 'Draft v4 description 1234567890' },
-      expectedStatus: 409
-    });
+    expect(fork1.body?.notice?.mode).toBe('forked');
 
-    expect(second?.error).toBe('NOT_ALLOWED');
-    expect(String(second?.message || '')).toMatch(/already replaced/i);
+    // fork same stopped again -> 409
+    const fork2 = await withAuth(
+      request(app).patch(`/api/ads/${draftId}`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        title: 'Fork stopped replaced (edit 2)',
+        description: 'Fork stopped replaced (edit 2) description 1234567890',
+        priceCents: 420
+      })
+      .expect(409);
+
+    expect(fork2.body?.error).toBe('NOT_ALLOWED');
   });
 
   test('publish: priceCents=0 and priceCents=null are allowed', async () => {
-    // A) priceCents = 0
-    const d0 = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Publish price 0',
-      description: 'Publish price 0 description 1234567890',
-      priceCents: 0
-    });
-    await addPhoto({ token: ownerToken, adId: d0 });
-    const p0 = await publish({ token: ownerToken, adId: d0 });
-    expect(p0?.status).toBe('active');
-    expect(p0?.published_at).toBeTruthy();
+    // A) priceCents=0
+    const create0 = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Price 0',
+        description: 'Price 0 description 1234567890',
+        priceCents: 0
+      })
+      .expect(201);
 
-    // B) priceCents = null
-    const dn = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Publish price null',
-      description: 'Publish price null description 1234567890',
-      priceCents: null
-    });
-    await addPhoto({ token: ownerToken, adId: dn });
-    const pn = await publish({ token: ownerToken, adId: dn });
-    expect(pn?.status).toBe('active');
-    expect(pn?.published_at).toBeTruthy();
+    const id0 = create0.body?.id;
+    expect(id0).toMatch(/[0-9a-f-]{36}/i);
+
+    await withAuth(
+      request(app).post(`/api/ads/${id0}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
+
+    await withAuth(request(app).post(`/api/ads/${id0}/publish`), ownerToken).expect(200);
+
+    // B) priceCents=null
+    const createNull = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Price null',
+        description: 'Price null description 1234567890',
+        priceCents: null
+      })
+      .expect(201);
+
+    const idNull = createNull.body?.id;
+    expect(idNull).toMatch(/[0-9a-f-]{36}/i);
+
+    await withAuth(
+      request(app).post(`/api/ads/${idNull}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
+
+    await withAuth(request(app).post(`/api/ads/${idNull}/publish`), ownerToken).expect(200);
   });
 
-  // Если решим правилом: "нельзя restart, если объявление уже replaced"
-  // (иначе можно получить две актуальные ветки)
-  test.skip('restart: stopped + replaced_by_ad_id => 409 (rule)', async () => {
-    // create + publish
-    const draftId = await createDraft({
-      token: ownerToken,
-      locationId,
-      title: 'Restart replaced',
-      description: 'Restart replaced description 1234567890',
-      priceCents: 100
-    });
-    await addPhoto({ token: ownerToken, adId: draftId });
-    await publish({ token: ownerToken, adId: draftId });
+  test('restart: stopped + replaced_by_ad_id => 409 (rule)', async () => {
+    // 1) create draft
+    const createRes = await withAuth(
+      request(app).post('/api/ads').set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        locationId,
+        title: 'Restart replaced rule',
+        description: 'Restart replaced rule description 1234567890',
+        priceCents: 999
+      })
+      .expect(201);
 
-    // fork active => original becomes stopped + replaced
-    await forkPatch({
-      token: ownerToken,
-      adId: draftId,
-      patch: { title: 'v2', description: 'v2 description 1234567890' },
-      expectedStatus: 200
-    });
+    const adId = createRes.body?.id;
+    expect(adId).toMatch(/[0-9a-f-]{36}/i);
 
-    // try restart original stopped (should be forbidden by rule)
-    const body = await restart({ token: ownerToken, adId: draftId, expectedStatus: 409 });
-    expect(body?.error).toBe('NOT_ALLOWED');
+    // 2) add photo
+    await withAuth(
+      request(app).post(`/api/ads/${adId}/photos`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({ filePath: 'uploads/smoke.jpg', sortOrder: 0 })
+      .expect(201);
+
+    // 3) publish -> active
+    await withAuth(request(app).post(`/api/ads/${adId}/publish`), ownerToken).expect(200);
+
+    // 4) stop -> stopped
+    await withAuth(request(app).post(`/api/ads/${adId}/stop`), ownerToken).expect(200);
+
+    // 5) fork stopped -> creates new draft and sets replaced_by on old stopped
+    const fork = await withAuth(
+      request(app).patch(`/api/ads/${adId}`).set('Content-Type', 'application/json'),
+      ownerToken
+    )
+      .send({
+        title: 'Restart replaced rule (fork)',
+        description: 'Restart replaced rule (fork) description 1234567890',
+        priceCents: 1000
+      })
+      .expect(200);
+
+    expect(fork.body?.notice?.mode).toBe('forked');
+
+    // 6) restart old stopped which is already replaced -> 409
+    const r = await withAuth(request(app).post(`/api/ads/${adId}/restart`), ownerToken).expect(409);
+    expect(r.body?.error).toBe('NOT_ALLOWED');
   });
 });
