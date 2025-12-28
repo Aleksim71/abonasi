@@ -2,10 +2,6 @@
 
 const { pool } = require('../../config/db');
 
-/* =========================================================
-   Helpers
-========================================================= */
-
 function isUuid(v) {
   return (
     typeof v === 'string' &&
@@ -20,33 +16,32 @@ function toInt(v, def) {
 
 function validateTitle(title) {
   const t = String(title || '').trim();
-  if (t.length < 3 || t.length > 120) {
+  if (t.length < 3 || t.length > 120)
     return { ok: false, value: t, message: 'title must be 3..120 chars' };
-  }
   return { ok: true, value: t };
 }
 
 function validateDescription(description) {
   const d = String(description || '').trim();
-  if (d.length < 10 || d.length > 5000) {
+  if (d.length < 10 || d.length > 5000)
     return { ok: false, value: d, message: 'description must be 10..5000 chars' };
-  }
   return { ok: true, value: d };
 }
 
 function validatePriceCents(v) {
   if (v === null) return { ok: true, value: null };
   if (v === undefined) return { ok: true, value: undefined };
-  if (!Number.isInteger(v) || v < 0) {
+  if (!Number.isInteger(v) || v < 0)
     return { ok: false, value: v, message: 'priceCents must be integer >= 0 or null' };
-  }
   return { ok: true, value: v };
 }
 
-/* =========================================================
-   POST /api/ads  (create draft)
-========================================================= */
-
+/**
+ * POST /api/ads
+ * requires auth
+ * body: { locationId, title, description, priceCents? }
+ * -> creates draft
+ */
 async function createDraft(req, res) {
   const userId = req.user?.id;
 
@@ -81,9 +76,7 @@ async function createDraft(req, res) {
       `
       INSERT INTO ads (user_id, location_id, title, description, price_cents, status)
       VALUES ($1, $2, $3, $4, $5, 'draft')
-      RETURNING
-        id, user_id, location_id, title, description, price_cents,
-        status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [userId, locationId, vt.value, vd.value, priceCents]
     );
@@ -97,10 +90,13 @@ async function createDraft(req, res) {
   }
 }
 
-/* =========================================================
-   PATCH /api/ads/:id
-========================================================= */
-
+/**
+ * PATCH /api/ads/:id
+ * requires auth
+ *
+ * ✅ Draft: обычная правка
+ * ✅ Active/Stopped: "редакция" = создание нового (fork) (+ stop old if active)
+ */
 async function updateAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -125,8 +121,7 @@ async function updateAd(req, res) {
 
     const cur = await client.query(
       `
-      SELECT id, user_id, status, location_id, title, description, price_cents,
-             published_at, replaced_by_ad_id
+      SELECT id, user_id, status, location_id, title, description, price_cents, published_at, replaced_by_ad_id
       FROM ads
       WHERE id = $1 AND user_id = $2
       FOR UPDATE
@@ -198,6 +193,7 @@ async function updateAd(req, res) {
       patch.description = vd.value;
     }
 
+    // ✅ A) normalize priceCents: allow "", null, "123"
     if (req.body.priceCents !== undefined) {
       const raw = req.body.priceCents;
 
@@ -220,14 +216,15 @@ async function updateAd(req, res) {
       const r = await client.query(
         `
         UPDATE ads
-        SET location_id = $1,
-            title = $2,
-            description = $3,
-            price_cents = $4
-        WHERE id = $5 AND user_id = $6 AND status = 'draft'
-        RETURNING
-          id, user_id, location_id, title, description, price_cents,
-          status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+        SET
+          location_id = $1,
+          title = $2,
+          description = $3,
+          price_cents = $4
+        WHERE id = $5
+          AND user_id = $6
+          AND status = 'draft'
+        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
         `,
         [patch.location_id, patch.title, patch.description, patch.price_cents, adId, userId]
       );
@@ -240,11 +237,15 @@ async function updateAd(req, res) {
       }
 
       await client.query('COMMIT');
-      return res.json({ data: r.rows[0], notice: { mode: 'updated', message: 'Draft ad updated' } });
+      return res.json({
+        data: r.rows[0],
+        notice: { mode: 'updated', message: 'Draft ad updated' }
+      });
     }
 
     const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
 
+    // ✅ bypass trigger for non-draft updates
     await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
 
     if (forkTargetStatus === 'active') {
@@ -275,11 +276,17 @@ async function updateAd(req, res) {
         NULL::timestamptz,
         $7::uuid
       )
-      RETURNING
-        id, user_id, location_id, title, description, price_cents,
-        status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
-      [userId, patch.location_id, patch.title, patch.description, patch.price_cents, forkTargetStatus, adId]
+      [
+        userId,
+        patch.location_id,
+        patch.title,
+        patch.description,
+        patch.price_cents,
+        forkTargetStatus,
+        adId
+      ]
     );
 
     const newAd = ins.rows[0];
@@ -350,7 +357,7 @@ async function updateAd(req, res) {
     try {
       await client.query('ROLLBACK');
     } catch {
-      // ignore
+      // ignore rollback error
     }
 
     if (err && err.code === '23503') {
@@ -367,10 +374,10 @@ async function updateAd(req, res) {
   }
 }
 
-/* =========================================================
-   POST /api/ads/:id/publish
-========================================================= */
-
+/**
+ * POST /api/ads/:id/publish
+ * requires auth
+ */
 async function publishAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -443,9 +450,7 @@ async function publishAd(req, res) {
           published_at = now(),
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'draft'
-      RETURNING
-        id, user_id, location_id, title, description, price_cents,
-        status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -463,10 +468,10 @@ async function publishAd(req, res) {
   }
 }
 
-/* =========================================================
-   POST /api/ads/:id/stop
-========================================================= */
-
+/**
+ * POST /api/ads/:id/stop
+ * requires auth
+ */
 async function stopAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -512,9 +517,7 @@ async function stopAd(req, res) {
       SET status = 'stopped',
           stopped_at = now()
       WHERE id = $1 AND user_id = $2 AND status = 'active'
-      RETURNING
-        id, user_id, location_id, title, description, price_cents,
-        status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -533,7 +536,7 @@ async function stopAd(req, res) {
     try {
       await client.query('ROLLBACK');
     } catch {
-      // ignore
+      // ignore rollback error
     }
 
     if (err && err.code === '45000') {
@@ -546,11 +549,10 @@ async function stopAd(req, res) {
   }
 }
 
-/* =========================================================
-   POST /api/ads/:id/restart
-   RULE C: stopped + replaced_by_ad_id => 409
-========================================================= */
-
+/**
+ * POST /api/ads/:id/restart
+ * requires auth
+ */
 async function restartAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -583,10 +585,11 @@ async function restartAd(req, res) {
       });
     }
 
+    // ✅ D1 rule: stopped-but-replaced cannot be restarted
     if (ad.replaced_by_ad_id) {
       return res.status(409).json({
         error: 'NOT_ALLOWED',
-        message: 'cannot restart: this ad is already replaced'
+        message: 'cannot restart: this ad was replaced'
       });
     }
 
@@ -596,10 +599,7 @@ async function restartAd(req, res) {
       SET status = 'active',
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'stopped'
-        AND replaced_by_ad_id IS NULL
-      RETURNING
-        id, user_id, location_id, title, description, price_cents,
-        status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -614,10 +614,10 @@ async function restartAd(req, res) {
   }
 }
 
-/* =========================================================
-   GET /api/ads/my
-========================================================= */
-
+/**
+ * GET /api/ads/my
+ * requires auth
+ */
 async function listMyAds(req, res) {
   const userId = req.user?.id;
   const status = req.query.status ? String(req.query.status) : null;
@@ -662,10 +662,11 @@ async function listMyAds(req, res) {
   }
 }
 
-/* =========================================================
-   GET /api/ads (feed)
-========================================================= */
-
+/**
+ * GET /api/ads (feed)
+ * query: locationId=<uuid> (required for MVP feed)
+ * returns: previewPhoto + photosCount
+ */
 async function listFeed(req, res) {
   const locationId = String(req.query.locationId || '').trim();
 
@@ -686,10 +687,12 @@ async function listFeed(req, res) {
         a.title, a.description, a.price_cents,
         a.status, a.created_at, a.published_at,
 
+        -- preview photo (first by sort_order)
         p.id         AS "previewPhotoId",
         p.file_path  AS "previewPhotoFilePath",
         p.sort_order AS "previewPhotoSortOrder",
 
+        -- total photos count
         COALESCE(pc.photos_count, 0)::int AS "photosCount"
       FROM ads a
       JOIN locations l ON l.id = a.location_id
@@ -727,6 +730,7 @@ async function listFeed(req, res) {
 
       // eslint-disable-next-line no-unused-vars
       const { previewPhotoId, previewPhotoFilePath, previewPhotoSortOrder, ...rest } = row;
+
       return { ...rest, previewPhoto };
     });
 
@@ -736,10 +740,11 @@ async function listFeed(req, res) {
   }
 }
 
-/* =========================================================
-   GET /api/ads/:id
-========================================================= */
-
+/**
+ * GET /api/ads/:id (public card)
+ * - public: only active
+ * - owner: any status
+ */
 async function getAdById(req, res) {
   const adId = String(req.params.id || '').trim();
   const viewerUserId = req.user?.id ?? null;
@@ -802,10 +807,18 @@ async function getAdById(req, res) {
   }
 }
 
-/* =========================================================
-   GET /api/ads/:id/versions
-========================================================= */
-
+/**
+ * GET /api/ads/:id/versions
+ * - public: only if this ad is active
+ * - owner: any status
+ *
+ * ✅ Timeline UX additions:
+ * - data.latestPublishedAdId
+ * - data.currentPublishedAdId
+ * - timeline[].isLatestPublished
+ * - timeline[].isCurrentPublished
+ * - public (non-owner): timeline filtered to active only (no draft/stopped leak)
+ */
 async function getAdVersions(req, res) {
   const adId = String(req.params.id || '').trim();
   const viewerUserId = req.user?.id ?? null;
@@ -815,6 +828,7 @@ async function getAdVersions(req, res) {
   }
 
   try {
+    // 1) base ad + access
     const base = await pool.query(
       `
       SELECT a.id, a.user_id, a.status
@@ -836,16 +850,17 @@ async function getAdVersions(req, res) {
       return res.status(404).json({ error: 'NOT_FOUND' });
     }
 
+    // 2) find root (oldest parent)
     const rootRes = await pool.query(
       `
       WITH RECURSIVE up AS (
-        SELECT id, parent_ad_id, 0 AS depth
+        SELECT id, parent_ad_id, replaced_by_ad_id, 0 AS depth
         FROM ads
         WHERE id = $1
 
         UNION ALL
 
-        SELECT a.id, a.parent_ad_id, up.depth + 1
+        SELECT a.id, a.parent_ad_id, a.replaced_by_ad_id, up.depth + 1
         FROM ads a
         JOIN up ON up.parent_ad_id = a.id
         WHERE up.depth < 50
@@ -860,6 +875,7 @@ async function getAdVersions(req, res) {
 
     const rootId = rootRes.rows[0]?.id || adId;
 
+    // 3) walk forward from root by replaced_by_ad_id
     const chainRes = await pool.query(
       `
       WITH RECURSIVE chain AS (
@@ -897,6 +913,7 @@ async function getAdVersions(req, res) {
 
     const ids = chainRes.rows.map((r) => r.id);
 
+    // 4) photosCount + previewPhoto per id (single query)
     const enrich = await pool.query(
       `
       SELECT
@@ -930,13 +947,12 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    // latestPublished = last with published_at != null
-    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.published_at !== null) || null;
+    // ✅ latest published = last row with published_at != null
+    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.published_at != null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
 
-    // ✅ FIX: currentPublished = current ACTIVE in chain (if none => null)
-    const currentPublishedRow = [...chainRes.rows].reverse().find((r) => r.status === 'active') || null;
-    const currentPublishedAdId = currentPublishedRow ? currentPublishedRow.id : null;
+    // ✅ current published = current ad if it is active, else null
+    const currentPublishedAdId = cur.status === 'active' ? cur.id : null;
 
     let timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
@@ -977,6 +993,7 @@ async function getAdVersions(req, res) {
       };
     });
 
+    // ✅ public: show only active versions (no draft/stopped leak)
     if (!isOwner) {
       timeline = timeline.filter((v) => v.status === 'active');
     }
@@ -986,10 +1003,8 @@ async function getAdVersions(req, res) {
         rootAdId: rootId,
         currentAdId: adId,
         isOwner: Boolean(isOwner),
-
         latestPublishedAdId,
         currentPublishedAdId,
-
         timeline
       }
     });
@@ -998,10 +1013,11 @@ async function getAdVersions(req, res) {
   }
 }
 
-/* =========================================================
-   POST /api/ads/:id/photos
-========================================================= */
-
+/**
+ * POST /api/ads/:id/photos
+ * requires auth
+ * MVP: only owner + only draft
+ */
 async function addPhotoToDraft(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -1078,10 +1094,11 @@ async function addPhotoToDraft(req, res) {
   }
 }
 
-/* =========================================================
-   DELETE /api/ads/:id/photos/:photoId
-========================================================= */
-
+/**
+ * DELETE /api/ads/:id/photos/:photoId
+ * requires auth
+ * MVP: only owner + only draft
+ */
 async function deletePhotoFromDraft(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -1133,10 +1150,12 @@ async function deletePhotoFromDraft(req, res) {
   }
 }
 
-/* =========================================================
-   PUT /api/ads/:id/photos/reorder
-========================================================= */
-
+/**
+ * PUT /api/ads/:id/photos/reorder
+ * requires auth
+ * body: { items: [{ photoId, sortOrder }] }
+ * MVP: only owner + only draft
+ */
 async function reorderPhotosInDraft(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -1227,7 +1246,7 @@ async function reorderPhotosInDraft(req, res) {
     try {
       await client.query('ROLLBACK');
     } catch {
-      // ignore
+      // ignore rollback error
     }
 
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
@@ -1235,10 +1254,6 @@ async function reorderPhotosInDraft(req, res) {
     client.release();
   }
 }
-
-/* =========================================================
-   Exports
-========================================================= */
 
 module.exports = {
   createDraft,
