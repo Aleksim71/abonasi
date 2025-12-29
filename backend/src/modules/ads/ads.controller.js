@@ -76,7 +76,8 @@ async function createDraft(req, res) {
       `
       INSERT INTO ads (user_id, location_id, title, description, price_cents, status)
       VALUES ($1, $2, $3, $4, $5, 'draft')
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status,
+                created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [userId, locationId, vt.value, vd.value, priceCents]
     );
@@ -121,7 +122,8 @@ async function updateAd(req, res) {
 
     const cur = await client.query(
       `
-      SELECT id, user_id, status, location_id, title, description, price_cents, published_at, replaced_by_ad_id
+      SELECT id, user_id, status, location_id, title, description, price_cents,
+             published_at, replaced_by_ad_id
       FROM ads
       WHERE id = $1 AND user_id = $2
       FOR UPDATE
@@ -193,7 +195,7 @@ async function updateAd(req, res) {
       patch.description = vd.value;
     }
 
-    // ✅ A) normalize priceCents: allow "", null, "123"
+    // ✅ normalize priceCents: allow "", null, "123"
     if (req.body.priceCents !== undefined) {
       const raw = req.body.priceCents;
 
@@ -224,7 +226,8 @@ async function updateAd(req, res) {
         WHERE id = $5
           AND user_id = $6
           AND status = 'draft'
-        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+        RETURNING id, user_id, location_id, title, description, price_cents, status,
+                  created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
         `,
         [patch.location_id, patch.title, patch.description, patch.price_cents, adId, userId]
       );
@@ -276,7 +279,8 @@ async function updateAd(req, res) {
         NULL::timestamptz,
         $7::uuid
       )
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status,
+                created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [
         userId,
@@ -450,7 +454,8 @@ async function publishAd(req, res) {
           published_at = now(),
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'draft'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status,
+                created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -484,6 +489,7 @@ async function stopAd(req, res) {
   try {
     await client.query('BEGIN');
 
+    // ✅ bypass trigger for non-draft updates
     await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
 
     const cur = await client.query(
@@ -517,7 +523,8 @@ async function stopAd(req, res) {
       SET status = 'stopped',
           stopped_at = now()
       WHERE id = $1 AND user_id = $2 AND status = 'active'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      RETURNING id, user_id, location_id, title, description, price_cents, status,
+                created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
@@ -536,7 +543,7 @@ async function stopAd(req, res) {
     try {
       await client.query('ROLLBACK');
     } catch {
-      // ignore rollback error
+      // ignore
     }
 
     if (err && err.code === '45000') {
@@ -552,6 +559,13 @@ async function stopAd(req, res) {
 /**
  * POST /api/ads/:id/restart
  * requires auth
+ *
+ * ✅ only stopped
+ * ✅ forbidden if replaced_by_ad_id is set
+ * ✅ must bypass trigger (non-draft update)
+ *
+ * Important for tests:
+ * - always expose stoppedAt (camelCase) so tests can read it even if response is wrapped later
  */
 async function restartAd(req, res) {
   const userId = req.user?.id;
@@ -561,56 +575,97 @@ async function restartAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
 
+  const client = await pool.connect();
   try {
-    const cur = await pool.query(
+    await client.query('BEGIN');
+
+    // ✅ bypass trigger for non-draft updates
+    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
+
+    const cur = await client.query(
       `
       SELECT id, status, replaced_by_ad_id
       FROM ads
       WHERE id = $1 AND user_id = $2
-      LIMIT 1
+      FOR UPDATE
       `,
       [adId, userId]
     );
 
     if (!cur.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
 
     if (ad.status !== 'stopped') {
+      await client.query('ROLLBACK');
       return res.status(409).json({
         error: 'NOT_ALLOWED',
         message: 'only stopped ads can be restarted'
       });
     }
 
-    // ✅ D1 rule: stopped-but-replaced cannot be restarted
     if (ad.replaced_by_ad_id) {
+      await client.query('ROLLBACK');
       return res.status(409).json({
         error: 'NOT_ALLOWED',
-        message: 'cannot restart: this ad was replaced'
+        message: 'cannot restart: this stopped ad is already replaced'
       });
     }
 
-    const r = await pool.query(
+    const r = await client.query(
       `
       UPDATE ads
       SET status = 'active',
           stopped_at = NULL
       WHERE id = $1 AND user_id = $2 AND status = 'stopped'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+        AND replaced_by_ad_id IS NULL
+      RETURNING id, user_id, location_id, title, description, price_cents, status,
+                created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
       `,
       [adId, userId]
     );
 
     if (!r.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart this ad' });
     }
 
-    return res.json(r.rows[0]);
+    await client.query('COMMIT');
+
+    const row = r.rows[0] || {};
+    // ✅ include camelCase mirrors so tests can reliably read nulls
+    return res.json({
+      ...row,
+
+      id: row.id,
+      userId: row.user_id,
+      locationId: row.location_id,
+      priceCents: row.price_cents,
+
+      createdAt: row.created_at,
+      publishedAt: row.published_at,
+      stoppedAt: row.stopped_at, // <-- MUST be null after restart
+
+      parentAdId: row.parent_ad_id,
+      replacedByAdId: row.replaced_by_ad_id
+    });
   } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignore
+    }
+
+    if (err && err.code === '45000') {
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
+    }
+
     return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+  } finally {
+    client.release();
   }
 }
 
@@ -812,12 +867,12 @@ async function getAdById(req, res) {
  * - public: only if this ad is active
  * - owner: any status
  *
- * ✅ Timeline UX additions:
- * - data.latestPublishedAdId
- * - data.currentPublishedAdId
+ * ✅ UX fields:
+ * - latestPublishedAdId (by published_at != null)
+ * - currentPublishedAdId (the active one, if exists)
  * - timeline[].isLatestPublished
  * - timeline[].isCurrentPublished
- * - public (non-owner): timeline filtered to active only (no draft/stopped leak)
+ * - public: timeline only active (no draft/stopped leak)
  */
 async function getAdVersions(req, res) {
   const adId = String(req.params.id || '').trim();
@@ -828,7 +883,6 @@ async function getAdVersions(req, res) {
   }
 
   try {
-    // 1) base ad + access
     const base = await pool.query(
       `
       SELECT a.id, a.user_id, a.status
@@ -850,7 +904,6 @@ async function getAdVersions(req, res) {
       return res.status(404).json({ error: 'NOT_FOUND' });
     }
 
-    // 2) find root (oldest parent)
     const rootRes = await pool.query(
       `
       WITH RECURSIVE up AS (
@@ -875,7 +928,6 @@ async function getAdVersions(req, res) {
 
     const rootId = rootRes.rows[0]?.id || adId;
 
-    // 3) walk forward from root by replaced_by_ad_id
     const chainRes = await pool.query(
       `
       WITH RECURSIVE chain AS (
@@ -913,7 +965,6 @@ async function getAdVersions(req, res) {
 
     const ids = chainRes.rows.map((r) => r.id);
 
-    // 4) photosCount + previewPhoto per id (single query)
     const enrich = await pool.query(
       `
       SELECT
@@ -947,12 +998,11 @@ async function getAdVersions(req, res) {
 
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
-    // ✅ latest published = last row with published_at != null
     const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.published_at != null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
 
-    // ✅ current published = current ad if it is active, else null
-    const currentPublishedAdId = cur.status === 'active' ? cur.id : null;
+    const currentPublishedRow = chainRes.rows.find((r) => r.status === 'active') || null;
+    const currentPublishedAdId = currentPublishedRow ? currentPublishedRow.id : null;
 
     let timeline = chainRes.rows.map((row) => {
       const extra = byId.get(row.id) || {};
@@ -993,7 +1043,6 @@ async function getAdVersions(req, res) {
       };
     });
 
-    // ✅ public: show only active versions (no draft/stopped leak)
     if (!isOwner) {
       timeline = timeline.filter((v) => v.status === 'active');
     }
@@ -1003,8 +1052,10 @@ async function getAdVersions(req, res) {
         rootAdId: rootId,
         currentAdId: adId,
         isOwner: Boolean(isOwner),
+
         latestPublishedAdId,
         currentPublishedAdId,
+
         timeline
       }
     });
@@ -1213,9 +1264,7 @@ async function reorderPhotosInDraft(req, res) {
         .json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [
-      adId
-    ]);
+    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
 
     for (const it of items) {
       await client.query(`UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`, [
