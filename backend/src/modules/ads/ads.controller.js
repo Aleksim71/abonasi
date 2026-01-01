@@ -553,66 +553,106 @@ async function stopAd(req, res) {
  * POST /api/ads/:id/restart
  * requires auth
  */
+
 async function restartAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
 
   if (!isUuid(adId)) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be UUID' });
   }
 
+  const client = await pool.connect();
   try {
-    const cur = await pool.query(
+    await client.query('BEGIN');
+
+    // 🔑 bypass trigger "Only draft ads can be updated" (LOCAL for this transaction)
+    await client.query(`SELECT set_config('app.allow_non_draft_update','1', true)`);
+
+    const cur = await client.query(
       `
-      SELECT id, status, replaced_by_ad_id
+      SELECT *
       FROM ads
-      WHERE id = $1 AND user_id = $2
-      LIMIT 1
+      WHERE id=$1
+      FOR UPDATE
       `,
-      [adId, userId]
+      [adId]
     );
 
-    if (!cur.rowCount) {
+    if (cur.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
 
+    // ownership check (do not leak)
+    if (!userId || String(ad.user_id) !== String(userId)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
+    }
+
+    // contract rules
+    if (ad.status === 'draft') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart draft' });
+    }
+    if (ad.status === 'active') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart active ad' });
+    }
     if (ad.status !== 'stopped') {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'only stopped ads can be restarted'
-      });
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart in this state' });
     }
-
-    // ✅ D1 rule: stopped-but-replaced cannot be restarted
     if (ad.replaced_by_ad_id) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot restart: this ad was replaced'
-      });
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart replaced ad' });
     }
 
-    const r = await pool.query(
+    // ✅ IMPORTANT: UPDATE must run on SAME client in SAME tx
+    await client.query(
       `
       UPDATE ads
-      SET status = 'active',
-          stopped_at = NULL
-      WHERE id = $1 AND user_id = $2 AND status = 'stopped'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
+      SET status='active',
+          stopped_at=NULL
+      WHERE id=$1
       `,
-      [adId, userId]
+      [adId]
     );
 
-    if (!r.rowCount) {
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart this ad' });
-    }
+    const fresh = await client.query('SELECT * FROM ads WHERE id=$1', [adId]);
 
-    return res.json(r.rows[0]);
-  } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    await client.query('COMMIT');
+    const row = fresh.rows[0];
+
+// mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
+const mapper = (typeof mapAdRowToDto !== 'undefined')
+  ? mapAdRowToDto
+  : (r) => ({
+      id: r.id,
+      userId: r.user_id,
+      locationId: r.location_id,
+      title: r.title,
+      description: r.description,
+      priceCents: r.price_cents,
+      status: r.status,
+      createdAt: r.created_at,
+      publishedAt: r.published_at,
+      stoppedAt: r.stopped_at,
+      parentAdId: r.parent_ad_id,
+      replacedByAdId: r.replaced_by_ad_id
+    });
+
+return res.status(200).json({ data: { ad: mapper(row) } });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    return res.status(500).json({ error: 'DB_ERROR', message: e.message });
+  } finally {
+    client.release();
   }
 }
+
 
 /**
  * GET /api/ads/my
