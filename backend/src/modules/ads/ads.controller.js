@@ -607,7 +607,7 @@ async function restartAd(req, res) {
     }
     if (ad.replaced_by_ad_id) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'CONFLICT', message: 'cannot restart replaced ad' });
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart replaced ad' });
     }
 
     // ✅ IMPORTANT: UPDATE must run on SAME client in SAME tx
