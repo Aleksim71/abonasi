@@ -1,6 +1,7 @@
 'use strict';
 const { restartAdTx } = require('./ads.restart.lifecycle');
 const { stopAdTx } = require('./ads.stop.lifecycle');
+const { publishAdTx } = require('./ads.publish.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -389,86 +390,16 @@ async function publishAd(req, res) {
   }
 
   try {
-    const cur = await pool.query(
-      `
-      SELECT id, status, title, description
-      FROM ads
-      WHERE id = $1 AND user_id = $2
-      LIMIT 1
-      `,
-      [adId, userId]
-    );
-
-    if (!cur.rowCount) {
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    if (ad.status !== 'draft') {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'only draft ads can be published'
-      });
-    }
-
-    const title = String(ad.title || '').trim();
-    const description = String(ad.description || '').trim();
-
-    if (title.length < 3 || title.length > 120) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: title must be 3..120 chars'
-      });
-    }
-
-    if (description.length < 10 || description.length > 5000) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: description must be 10..5000 chars'
-      });
-    }
-
-    const photos = await pool.query(
-      `
-      SELECT COUNT(*)::int AS cnt
-      FROM ad_photos
-      WHERE ad_id = $1
-      `,
-      [adId]
-    );
-
-    if (photos.rows[0].cnt === 0) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: at least one photo is required'
-      });
-    }
-
-    const r = await pool.query(
-      `
-      UPDATE ads
-      SET status = 'active',
-          published_at = now(),
-          stopped_at = NULL
-      WHERE id = $1 AND user_id = $2 AND status = 'draft'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [adId, userId]
-    );
-
-    if (!r.rowCount) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish this ad'
-      });
-    }
-
-    return res.json(r.rows[0]);
+    const row = await publishAdTx({ userId, adId });
+    return res.json(row);
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
+    }
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * POST /api/ads/:id/stop
