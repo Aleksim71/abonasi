@@ -1,12 +1,14 @@
 'use strict';
 
+const { txError } = require('../../utils/httpError');
+
 /**
  * ads.fork.lifecycle.js
  * Extracted fork-branch from updateAd (non-draft -> create new ad + copy photos + replace old).
  *
  * IMPORTANT:
  * - does NOT BEGIN/COMMIT/ROLLBACK (controller owns transaction)
- * - returns { ok:false, status, body } for early exits (controller will ROLLBACK + respond)
+ * - throws TxError (err.status + err.body) for early exits (controller will ROLLBACK + respond)
  */
 
 async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
@@ -22,14 +24,7 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
-      return {
-        ok: false,
-        status: 409,
-        body: {
-          error: 'NOT_ALLOWED',
-          message: 'cannot edit published ad: at least one photo is required'
-        }
-      };
+      throw txError(409, 'NOT_ALLOWED', 'cannot edit published ad: at least one photo is required');
     }
   }
 
@@ -87,11 +82,7 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if (!stopped.rowCount) {
-      return {
-        ok: false,
-        status: 409,
-        body: { error: 'NOT_ALLOWED', message: 'cannot replace this ad' }
-      };
+      throw txError(409, 'NOT_ALLOWED', 'cannot replace this ad');
     }
   } else {
     const linked = await client.query(
@@ -105,11 +96,7 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if (!linked.rowCount) {
-      return {
-        ok: false,
-        status: 409,
-        body: { error: 'NOT_ALLOWED', message: 'cannot replace this ad' }
-      };
+      throw txError(409, 'NOT_ALLOWED', 'cannot replace this ad');
     }
   }
 
