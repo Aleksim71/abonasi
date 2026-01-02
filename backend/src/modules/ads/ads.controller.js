@@ -1,4 +1,5 @@
 'use strict';
+
 const { restartAdTx } = require('./ads.restart.lifecycle');
 const { stopAdTx } = require('./ads.stop.lifecycle');
 const { publishAdTx } = require('./ads.publish.lifecycle');
@@ -7,6 +8,7 @@ const { createDraftTx } = require('./ads.create.lifecycle');
 const { updateDraftAd } = require('./ads.draftUpdate.lifecycle');
 
 const { pool } = require('../../config/db');
+const { handleHttpError } = require('../../utils/handleHttpError');
 
 function isUuid(v) {
   return (
@@ -88,13 +90,9 @@ async function createDraft(req, res) {
 
     return res.status(201).json(row);
   } catch (err) {
-    if (err && err.status && err.body) {
-      return res.status(err.status).json(err.body);
-    }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.createDraft' });
   }
 }
-
 
 /**
  * PATCH /api/ads/:id
@@ -219,12 +217,8 @@ async function updateAd(req, res) {
     }
 
     if (oldAd.status === 'draft') {
+      // D3a: lifecycle throws TxError; no {ok:false} results
       const r = await updateDraftAd({ client, userId, adId, patch });
-
-      if (!r.ok) {
-        await client.query('ROLLBACK');
-        return res.status(r.status).json(r.body);
-      }
 
       await client.query('COMMIT');
       return res.json({
@@ -233,13 +227,8 @@ async function updateAd(req, res) {
       });
     }
 
-    
+    // D3a: lifecycle throws TxError; no {ok:false} results
     const forkRes = await forkNonDraft({ client, userId, adId, oldAd, patch });
-
-    if (!forkRes.ok) {
-      await client.query('ROLLBACK');
-      return res.status(forkRes.status).json(forkRes.body);
-    }
 
     await client.query('COMMIT');
 
@@ -256,8 +245,6 @@ async function updateAd(req, res) {
       },
       notice: { mode: 'forked', message: noticeMessage }
     });
-
-
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -265,6 +252,7 @@ async function updateAd(req, res) {
       // ignore rollback error
     }
 
+    // Keep existing special cases for DB errors:
     if (err && err.code === '23503') {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
     }
@@ -273,7 +261,7 @@ async function updateAd(req, res) {
       return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
     }
 
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.updateAd' });
   } finally {
     client.release();
   }
@@ -295,13 +283,9 @@ async function publishAd(req, res) {
     const row = await publishAdTx({ userId, adId });
     return res.json(row);
   } catch (err) {
-    if (err && err.status && err.body) {
-      return res.status(err.status).json(err.body);
-    }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.publishAd' });
   }
 }
-
 
 /**
  * POST /api/ads/:id/stop
@@ -319,19 +303,14 @@ async function stopAd(req, res) {
     const row = await stopAdTx({ userId, adId });
     return res.json(row);
   } catch (err) {
-    if (err && err.status && err.body) {
-      return res.status(err.status).json(err.body);
-    }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.stopAd' });
   }
 }
-
 
 /**
  * POST /api/ads/:id/restart
  * requires auth
  */
-
 async function restartAd(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
@@ -344,33 +323,32 @@ async function restartAd(req, res) {
     const row = await restartAdTx({ userId, adId });
 
     // mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
-    const mapper = (typeof mapAdRowToDto !== 'undefined')
-      ? mapAdRowToDto
-      : (r) => ({
-          id: r.id,
-          userId: r.user_id,
-          locationId: r.location_id,
-          title: r.title,
-          description: r.description,
-          priceCents: r.price_cents,
-          status: r.status,
-          createdAt: r.created_at,
-          publishedAt: r.published_at,
-          stoppedAt: r.stopped_at,
-          parentAdId: r.parent_ad_id,
-          replacedByAdId: r.replaced_by_ad_id
-        });
+    // eslint-disable-next-line no-undef
+    const mapper =
+      // eslint-disable-next-line no-undef
+      typeof mapAdRowToDto !== 'undefined'
+        ? // eslint-disable-next-line no-undef
+          mapAdRowToDto
+        : (r) => ({
+            id: r.id,
+            userId: r.user_id,
+            locationId: r.location_id,
+            title: r.title,
+            description: r.description,
+            priceCents: r.price_cents,
+            status: r.status,
+            createdAt: r.created_at,
+            publishedAt: r.published_at,
+            stoppedAt: r.stopped_at,
+            parentAdId: r.parent_ad_id,
+            replacedByAdId: r.replaced_by_ad_id
+          });
 
     return res.status(200).json({ data: { ad: mapper(row) } });
-  } catch (e) {
-    if (e && e.status && e.body) {
-      return res.status(e.status).json(e.body);
-    }
-    return res.status(500).json({ error: 'DB_ERROR', message: e?.message || 'db error' });
+  } catch (err) {
+    return handleHttpError(res, err, { scope: 'ads.restartAd' });
   }
 }
-
-
 
 /**
  * GET /api/ads/my
@@ -416,7 +394,7 @@ async function listMyAds(req, res) {
     const r = await pool.query(sql, values);
     return res.json(r.rows);
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.listMyAds' });
   }
 }
 
@@ -494,7 +472,7 @@ async function listFeed(req, res) {
 
     return res.json(rows);
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.listFeed' });
   }
 }
 
@@ -561,7 +539,7 @@ async function getAdById(req, res) {
       }
     });
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.getAdById' });
   }
 }
 
@@ -706,7 +684,8 @@ async function getAdVersions(req, res) {
     const byId = new Map(enrich.rows.map((r) => [r.id, r]));
 
     // ✅ latest published = last row with published_at != null
-    const latestPublishedRow = [...chainRes.rows].reverse().find((r) => r.published_at != null) || null;
+    const latestPublishedRow =
+      [...chainRes.rows].reverse().find((r) => r.published_at != null) || null;
     const latestPublishedAdId = latestPublishedRow ? latestPublishedRow.id : null;
 
     // ✅ current published = current ad if it is active, else null
@@ -767,7 +746,7 @@ async function getAdVersions(req, res) {
       }
     });
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.getAdVersions' });
   }
 }
 
@@ -848,7 +827,7 @@ async function addPhotoToDraft(req, res) {
       }
     });
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.addPhotoToDraft' });
   }
 }
 
@@ -904,7 +883,7 @@ async function deletePhotoFromDraft(req, res) {
 
     return res.json({ data: { adId, photos: photosRes.rows } });
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.deletePhotoFromDraft' });
   }
 }
 
@@ -1007,7 +986,7 @@ async function reorderPhotosInDraft(req, res) {
       // ignore rollback error
     }
 
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'ads.reorderPhotosInDraft' });
   } finally {
     client.release();
   }
