@@ -1,8 +1,13 @@
 'use strict';
 
+const { txError } = require('../../utils/httpError');
+
 /**
  * Extract draft-update branch from updateAd.
  * Controller owns transaction BEGIN/COMMIT/ROLLBACK.
+ *
+ * IMPORTANT:
+ * - throws TxError (err.status + err.body) for early exits (controller will ROLLBACK + respond)
  */
 
 async function updateDraftAd({ client, userId, adId, patch }) {
@@ -23,11 +28,7 @@ async function updateDraftAd({ client, userId, adId, patch }) {
   );
 
   if (!r.rowCount) {
-    return {
-      ok: false,
-      status: 409,
-      body: { error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' }
-    };
+    throw txError(409, 'NOT_ALLOWED', 'only own draft ads can be edited');
   }
 
   return { ok: true, row: r.rows[0] };
