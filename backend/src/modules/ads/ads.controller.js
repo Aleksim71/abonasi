@@ -1,4 +1,10 @@
 'use strict';
+const { restartAdTx } = require('./ads.restart.lifecycle');
+const { stopAdTx } = require('./ads.stop.lifecycle');
+const { publishAdTx } = require('./ads.publish.lifecycle');
+const { forkNonDraft } = require('./ads.fork.lifecycle');
+const { createDraftTx } = require('./ads.create.lifecycle');
+const { updateDraftAd } = require('./ads.draftUpdate.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -72,23 +78,23 @@ async function createDraft(req, res) {
   }
 
   try {
-    const r = await pool.query(
-      `
-      INSERT INTO ads (user_id, location_id, title, description, price_cents, status)
-      VALUES ($1, $2, $3, $4, $5, 'draft')
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [userId, locationId, vt.value, vd.value, priceCents]
-    );
+    const row = await createDraftTx({
+      userId,
+      locationId,
+      title: vt.value,
+      description: vd.value,
+      priceCents
+    });
 
-    return res.status(201).json(r.rows[0]);
+    return res.status(201).json(row);
   } catch (err) {
-    if (err && err.code === '23503') {
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
     }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * PATCH /api/ads/:id
@@ -213,135 +219,32 @@ async function updateAd(req, res) {
     }
 
     if (oldAd.status === 'draft') {
-      const r = await client.query(
-        `
-        UPDATE ads
-        SET
-          location_id = $1,
-          title = $2,
-          description = $3,
-          price_cents = $4
-        WHERE id = $5
-          AND user_id = $6
-          AND status = 'draft'
-        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-        `,
-        [patch.location_id, patch.title, patch.description, patch.price_cents, adId, userId]
-      );
+      const r = await updateDraftAd({ client, userId, adId, patch });
 
-      if (!r.rowCount) {
+      if (!r.ok) {
         await client.query('ROLLBACK');
-        return res
-          .status(409)
-          .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+        return res.status(r.status).json(r.body);
       }
 
       await client.query('COMMIT');
       return res.json({
-        data: r.rows[0],
+        data: r.row,
         notice: { mode: 'updated', message: 'Draft ad updated' }
       });
     }
 
-    const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
+    
+    const forkRes = await forkNonDraft({ client, userId, adId, oldAd, patch });
 
-    // ✅ bypass trigger for non-draft updates
-    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
-
-    if (forkTargetStatus === 'active') {
-      const photosCnt = await client.query(
-        `SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`,
-        [adId]
-      );
-      if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'NOT_ALLOWED',
-          message: 'cannot edit published ad: at least one photo is required'
-        });
-      }
-    }
-
-    const ins = await client.query(
-      `
-      INSERT INTO ads (
-        user_id, location_id, title, description, price_cents,
-        status, published_at, stopped_at,
-        parent_ad_id
-      )
-      VALUES (
-        $1, $2, $3, $4, $5,
-        $6::ad_status,
-        CASE WHEN $6::ad_status = 'active'::ad_status THEN now() ELSE NULL::timestamptz END,
-        NULL::timestamptz,
-        $7::uuid
-      )
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [
-        userId,
-        patch.location_id,
-        patch.title,
-        patch.description,
-        patch.price_cents,
-        forkTargetStatus,
-        adId
-      ]
-    );
-
-    const newAd = ins.rows[0];
-
-    await client.query(
-      `
-      INSERT INTO ad_photos (ad_id, file_path, sort_order)
-      SELECT $1, file_path, sort_order
-      FROM ad_photos
-      WHERE ad_id = $2
-      ORDER BY sort_order ASC, created_at ASC
-      `,
-      [newAd.id, adId]
-    );
-
-    if (oldAd.status === 'active') {
-      const stopped = await client.query(
-        `
-        UPDATE ads
-        SET status = 'stopped',
-            stopped_at = now(),
-            replaced_by_ad_id = $3
-        WHERE id = $1 AND user_id = $2 AND status = 'active'
-          AND replaced_by_ad_id IS NULL
-        `,
-        [adId, userId, newAd.id]
-      );
-
-      if (!stopped.rowCount) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
-      }
-    } else {
-      const linked = await client.query(
-        `
-        UPDATE ads
-        SET replaced_by_ad_id = $1
-        WHERE id = $2 AND user_id = $3 AND status = 'stopped'
-          AND replaced_by_ad_id IS NULL
-        `,
-        [newAd.id, adId, userId]
-      );
-
-      if (!linked.rowCount) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
-      }
+    if (!forkRes.ok) {
+      await client.query('ROLLBACK');
+      return res.status(forkRes.status).json(forkRes.body);
     }
 
     await client.query('COMMIT');
 
-    const noticeMessage =
-      oldAd.status === 'active'
-        ? 'This ad was published. A new version has been created and published; the old one has been stopped.'
-        : 'This ad was stopped. A new draft version has been created; the old one remains stopped.';
+    const newAd = forkRes.newAd;
+    const noticeMessage = forkRes.noticeMessage;
 
     return res.json({
       data: {
@@ -353,6 +256,8 @@ async function updateAd(req, res) {
       },
       notice: { mode: 'forked', message: noticeMessage }
     });
+
+
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -387,86 +292,16 @@ async function publishAd(req, res) {
   }
 
   try {
-    const cur = await pool.query(
-      `
-      SELECT id, status, title, description
-      FROM ads
-      WHERE id = $1 AND user_id = $2
-      LIMIT 1
-      `,
-      [adId, userId]
-    );
-
-    if (!cur.rowCount) {
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    if (ad.status !== 'draft') {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'only draft ads can be published'
-      });
-    }
-
-    const title = String(ad.title || '').trim();
-    const description = String(ad.description || '').trim();
-
-    if (title.length < 3 || title.length > 120) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: title must be 3..120 chars'
-      });
-    }
-
-    if (description.length < 10 || description.length > 5000) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: description must be 10..5000 chars'
-      });
-    }
-
-    const photos = await pool.query(
-      `
-      SELECT COUNT(*)::int AS cnt
-      FROM ad_photos
-      WHERE ad_id = $1
-      `,
-      [adId]
-    );
-
-    if (photos.rows[0].cnt === 0) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish: at least one photo is required'
-      });
-    }
-
-    const r = await pool.query(
-      `
-      UPDATE ads
-      SET status = 'active',
-          published_at = now(),
-          stopped_at = NULL
-      WHERE id = $1 AND user_id = $2 AND status = 'draft'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [adId, userId]
-    );
-
-    if (!r.rowCount) {
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot publish this ad'
-      });
-    }
-
-    return res.json(r.rows[0]);
+    const row = await publishAdTx({ userId, adId });
+    return res.json(row);
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
+    }
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * POST /api/ads/:id/stop
@@ -480,74 +315,17 @@ async function stopAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
-
-    const cur = await client.query(
-      `
-      SELECT id, status
-      FROM ads
-      WHERE id = $1 AND user_id = $2
-      FOR UPDATE
-      `,
-      [adId, userId]
-    );
-
-    if (!cur.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    if (ad.status !== 'active') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'only active ads can be stopped'
-      });
-    }
-
-    const r = await client.query(
-      `
-      UPDATE ads
-      SET status = 'stopped',
-          stopped_at = now()
-      WHERE id = $1 AND user_id = $2 AND status = 'active'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [adId, userId]
-    );
-
-    if (!r.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot stop this ad'
-      });
-    }
-
-    await client.query('COMMIT');
-    return res.json(r.rows[0]);
+    const row = await stopAdTx({ userId, adId });
+    return res.json(row);
   } catch (err) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      // ignore rollback error
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
     }
-
-    if (err && err.code === '45000') {
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
-    }
-
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
-  } finally {
-    client.release();
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * POST /api/ads/:id/restart
@@ -562,96 +340,36 @@ async function restartAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be UUID' });
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    const row = await restartAdTx({ userId, adId });
 
-    // 🔑 bypass trigger "Only draft ads can be updated" (LOCAL for this transaction)
-    await client.query(`SELECT set_config('app.allow_non_draft_update','1', true)`);
+    // mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
+    const mapper = (typeof mapAdRowToDto !== 'undefined')
+      ? mapAdRowToDto
+      : (r) => ({
+          id: r.id,
+          userId: r.user_id,
+          locationId: r.location_id,
+          title: r.title,
+          description: r.description,
+          priceCents: r.price_cents,
+          status: r.status,
+          createdAt: r.created_at,
+          publishedAt: r.published_at,
+          stoppedAt: r.stopped_at,
+          parentAdId: r.parent_ad_id,
+          replacedByAdId: r.replaced_by_ad_id
+        });
 
-    const cur = await client.query(
-      `
-      SELECT *
-      FROM ads
-      WHERE id=$1
-      FOR UPDATE
-      `,
-      [adId]
-    );
-
-    if (cur.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    // ownership check (do not leak)
-    if (!userId || String(ad.user_id) !== String(userId)) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    // contract rules
-    if (ad.status === 'draft') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart draft' });
-    }
-    if (ad.status === 'active') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart active ad' });
-    }
-    if (ad.status !== 'stopped') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart in this state' });
-    }
-    if (ad.replaced_by_ad_id) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart replaced ad' });
-    }
-
-    // ✅ IMPORTANT: UPDATE must run on SAME client in SAME tx
-    await client.query(
-      `
-      UPDATE ads
-      SET status='active',
-          stopped_at=NULL
-      WHERE id=$1
-      `,
-      [adId]
-    );
-
-    const fresh = await client.query('SELECT * FROM ads WHERE id=$1', [adId]);
-
-    await client.query('COMMIT');
-    const row = fresh.rows[0];
-
-// mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
-const mapper = (typeof mapAdRowToDto !== 'undefined')
-  ? mapAdRowToDto
-  : (r) => ({
-      id: r.id,
-      userId: r.user_id,
-      locationId: r.location_id,
-      title: r.title,
-      description: r.description,
-      priceCents: r.price_cents,
-      status: r.status,
-      createdAt: r.created_at,
-      publishedAt: r.published_at,
-      stoppedAt: r.stopped_at,
-      parentAdId: r.parent_ad_id,
-      replacedByAdId: r.replaced_by_ad_id
-    });
-
-return res.status(200).json({ data: { ad: mapper(row) } });
+    return res.status(200).json({ data: { ad: mapper(row) } });
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    return res.status(500).json({ error: 'DB_ERROR', message: e.message });
-  } finally {
-    client.release();
+    if (e && e.status && e.body) {
+      return res.status(e.status).json(e.body);
+    }
+    return res.status(500).json({ error: 'DB_ERROR', message: e?.message || 'db error' });
   }
 }
+
 
 
 /**
