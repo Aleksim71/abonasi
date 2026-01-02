@@ -1,4 +1,5 @@
 'use strict';
+const { restartAdTx } = require('./ads.restart.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -562,96 +563,36 @@ async function restartAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be UUID' });
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    const row = await restartAdTx({ userId, adId });
 
-    // 🔑 bypass trigger "Only draft ads can be updated" (LOCAL for this transaction)
-    await client.query(`SELECT set_config('app.allow_non_draft_update','1', true)`);
+    // mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
+    const mapper = (typeof mapAdRowToDto !== 'undefined')
+      ? mapAdRowToDto
+      : (r) => ({
+          id: r.id,
+          userId: r.user_id,
+          locationId: r.location_id,
+          title: r.title,
+          description: r.description,
+          priceCents: r.price_cents,
+          status: r.status,
+          createdAt: r.created_at,
+          publishedAt: r.published_at,
+          stoppedAt: r.stopped_at,
+          parentAdId: r.parent_ad_id,
+          replacedByAdId: r.replaced_by_ad_id
+        });
 
-    const cur = await client.query(
-      `
-      SELECT *
-      FROM ads
-      WHERE id=$1
-      FOR UPDATE
-      `,
-      [adId]
-    );
-
-    if (cur.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    // ownership check (do not leak)
-    if (!userId || String(ad.user_id) !== String(userId)) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    // contract rules
-    if (ad.status === 'draft') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart draft' });
-    }
-    if (ad.status === 'active') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart active ad' });
-    }
-    if (ad.status !== 'stopped') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart in this state' });
-    }
-    if (ad.replaced_by_ad_id) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot restart replaced ad' });
-    }
-
-    // ✅ IMPORTANT: UPDATE must run on SAME client in SAME tx
-    await client.query(
-      `
-      UPDATE ads
-      SET status='active',
-          stopped_at=NULL
-      WHERE id=$1
-      `,
-      [adId]
-    );
-
-    const fresh = await client.query('SELECT * FROM ads WHERE id=$1', [adId]);
-
-    await client.query('COMMIT');
-    const row = fresh.rows[0];
-
-// mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
-const mapper = (typeof mapAdRowToDto !== 'undefined')
-  ? mapAdRowToDto
-  : (r) => ({
-      id: r.id,
-      userId: r.user_id,
-      locationId: r.location_id,
-      title: r.title,
-      description: r.description,
-      priceCents: r.price_cents,
-      status: r.status,
-      createdAt: r.created_at,
-      publishedAt: r.published_at,
-      stoppedAt: r.stopped_at,
-      parentAdId: r.parent_ad_id,
-      replacedByAdId: r.replaced_by_ad_id
-    });
-
-return res.status(200).json({ data: { ad: mapper(row) } });
+    return res.status(200).json({ data: { ad: mapper(row) } });
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    return res.status(500).json({ error: 'DB_ERROR', message: e.message });
-  } finally {
-    client.release();
+    if (e && e.status && e.body) {
+      return res.status(e.status).json(e.body);
+    }
+    return res.status(500).json({ error: 'DB_ERROR', message: e?.message || 'db error' });
   }
 }
+
 
 
 /**
