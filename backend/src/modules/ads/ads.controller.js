@@ -3,6 +3,7 @@ const { restartAdTx } = require('./ads.restart.lifecycle');
 const { stopAdTx } = require('./ads.stop.lifecycle');
 const { publishAdTx } = require('./ads.publish.lifecycle');
 const { forkNonDraft } = require('./ads.fork.lifecycle');
+const { createDraftTx } = require('./ads.create.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -76,23 +77,23 @@ async function createDraft(req, res) {
   }
 
   try {
-    const r = await pool.query(
-      `
-      INSERT INTO ads (user_id, location_id, title, description, price_cents, status)
-      VALUES ($1, $2, $3, $4, $5, 'draft')
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [userId, locationId, vt.value, vd.value, priceCents]
-    );
+    const row = await createDraftTx({
+      userId,
+      locationId,
+      title: vt.value,
+      description: vd.value,
+      priceCents
+    });
 
-    return res.status(201).json(r.rows[0]);
+    return res.status(201).json(row);
   } catch (err) {
-    if (err && err.code === '23503') {
-      return res.status(400).json({ error: 'BAD_REQUEST', message: 'locationId does not exist' });
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
     }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * PATCH /api/ads/:id
