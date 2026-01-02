@@ -2,6 +2,7 @@
 const { restartAdTx } = require('./ads.restart.lifecycle');
 const { stopAdTx } = require('./ads.stop.lifecycle');
 const { publishAdTx } = require('./ads.publish.lifecycle');
+const { forkNonDraft } = require('./ads.fork.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -246,105 +247,18 @@ async function updateAd(req, res) {
       });
     }
 
-    const forkTargetStatus = oldAd.status === 'active' ? 'active' : 'draft';
+    
+    const forkRes = await forkNonDraft({ client, userId, adId, oldAd, patch });
 
-    // ✅ bypass trigger for non-draft updates
-    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
-
-    if (forkTargetStatus === 'active') {
-      const photosCnt = await client.query(
-        `SELECT COUNT(*)::int AS cnt FROM ad_photos WHERE ad_id = $1`,
-        [adId]
-      );
-      if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'NOT_ALLOWED',
-          message: 'cannot edit published ad: at least one photo is required'
-        });
-      }
-    }
-
-    const ins = await client.query(
-      `
-      INSERT INTO ads (
-        user_id, location_id, title, description, price_cents,
-        status, published_at, stopped_at,
-        parent_ad_id
-      )
-      VALUES (
-        $1, $2, $3, $4, $5,
-        $6::ad_status,
-        CASE WHEN $6::ad_status = 'active'::ad_status THEN now() ELSE NULL::timestamptz END,
-        NULL::timestamptz,
-        $7::uuid
-      )
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [
-        userId,
-        patch.location_id,
-        patch.title,
-        patch.description,
-        patch.price_cents,
-        forkTargetStatus,
-        adId
-      ]
-    );
-
-    const newAd = ins.rows[0];
-
-    await client.query(
-      `
-      INSERT INTO ad_photos (ad_id, file_path, sort_order)
-      SELECT $1, file_path, sort_order
-      FROM ad_photos
-      WHERE ad_id = $2
-      ORDER BY sort_order ASC, created_at ASC
-      `,
-      [newAd.id, adId]
-    );
-
-    if (oldAd.status === 'active') {
-      const stopped = await client.query(
-        `
-        UPDATE ads
-        SET status = 'stopped',
-            stopped_at = now(),
-            replaced_by_ad_id = $3
-        WHERE id = $1 AND user_id = $2 AND status = 'active'
-          AND replaced_by_ad_id IS NULL
-        `,
-        [adId, userId, newAd.id]
-      );
-
-      if (!stopped.rowCount) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
-      }
-    } else {
-      const linked = await client.query(
-        `
-        UPDATE ads
-        SET replaced_by_ad_id = $1
-        WHERE id = $2 AND user_id = $3 AND status = 'stopped'
-          AND replaced_by_ad_id IS NULL
-        `,
-        [newAd.id, adId, userId]
-      );
-
-      if (!linked.rowCount) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'NOT_ALLOWED', message: 'cannot replace this ad' });
-      }
+    if (!forkRes.ok) {
+      await client.query('ROLLBACK');
+      return res.status(forkRes.status).json(forkRes.body);
     }
 
     await client.query('COMMIT');
 
-    const noticeMessage =
-      oldAd.status === 'active'
-        ? 'This ad was published. A new version has been created and published; the old one has been stopped.'
-        : 'This ad was stopped. A new draft version has been created; the old one remains stopped.';
+    const newAd = forkRes.newAd;
+    const noticeMessage = forkRes.noticeMessage;
 
     return res.json({
       data: {
@@ -356,6 +270,8 @@ async function updateAd(req, res) {
       },
       notice: { mode: 'forked', message: noticeMessage }
     });
+
+
   } catch (err) {
     try {
       await client.query('ROLLBACK');
