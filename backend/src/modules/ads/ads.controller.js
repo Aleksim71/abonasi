@@ -1,5 +1,6 @@
 'use strict';
 const { restartAdTx } = require('./ads.restart.lifecycle');
+const { stopAdTx } = require('./ads.stop.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -481,74 +482,17 @@ async function stopAd(req, res) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    await client.query(`SET LOCAL app.allow_non_draft_update = '1'`);
-
-    const cur = await client.query(
-      `
-      SELECT id, status
-      FROM ads
-      WHERE id = $1 AND user_id = $2
-      FOR UPDATE
-      `,
-      [adId, userId]
-    );
-
-    if (!cur.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'ad not found' });
-    }
-
-    const ad = cur.rows[0];
-
-    if (ad.status !== 'active') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'only active ads can be stopped'
-      });
-    }
-
-    const r = await client.query(
-      `
-      UPDATE ads
-      SET status = 'stopped',
-          stopped_at = now()
-      WHERE id = $1 AND user_id = $2 AND status = 'active'
-      RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-      `,
-      [adId, userId]
-    );
-
-    if (!r.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'NOT_ALLOWED',
-        message: 'cannot stop this ad'
-      });
-    }
-
-    await client.query('COMMIT');
-    return res.json(r.rows[0]);
+    const row = await stopAdTx({ userId, adId });
+    return res.json(row);
   } catch (err) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      // ignore rollback error
+    if (err && err.status && err.body) {
+      return res.status(err.status).json(err.body);
     }
-
-    if (err && err.code === '45000') {
-      return res.status(409).json({ error: 'NOT_ALLOWED', message: String(err.message || err) });
-    }
-
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
-  } finally {
-    client.release();
+    return res.status(500).json({ error: 'DB_ERROR', message: String(err?.message || err) });
   }
 }
+
 
 /**
  * POST /api/ads/:id/restart
