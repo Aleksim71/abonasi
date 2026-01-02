@@ -4,6 +4,7 @@ const { stopAdTx } = require('./ads.stop.lifecycle');
 const { publishAdTx } = require('./ads.publish.lifecycle');
 const { forkNonDraft } = require('./ads.fork.lifecycle');
 const { createDraftTx } = require('./ads.create.lifecycle');
+const { updateDraftAd } = require('./ads.draftUpdate.lifecycle');
 
 const { pool } = require('../../config/db');
 
@@ -218,32 +219,16 @@ async function updateAd(req, res) {
     }
 
     if (oldAd.status === 'draft') {
-      const r = await client.query(
-        `
-        UPDATE ads
-        SET
-          location_id = $1,
-          title = $2,
-          description = $3,
-          price_cents = $4
-        WHERE id = $5
-          AND user_id = $6
-          AND status = 'draft'
-        RETURNING id, user_id, location_id, title, description, price_cents, status, created_at, published_at, stopped_at, parent_ad_id, replaced_by_ad_id
-        `,
-        [patch.location_id, patch.title, patch.description, patch.price_cents, adId, userId]
-      );
+      const r = await updateDraftAd({ client, userId, adId, patch });
 
-      if (!r.rowCount) {
+      if (!r.ok) {
         await client.query('ROLLBACK');
-        return res
-          .status(409)
-          .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+        return res.status(r.status).json(r.body);
       }
 
       await client.query('COMMIT');
       return res.json({
-        data: r.rows[0],
+        data: r.row,
         notice: { mode: 'updated', message: 'Draft ad updated' }
       });
     }
