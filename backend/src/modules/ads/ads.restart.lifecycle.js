@@ -12,6 +12,7 @@
  */
 
 const pool = require('../../db/pool');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 function httpError(status, body) {
   const e = new Error(body?.message || body?.error || 'ERROR');
@@ -40,7 +41,7 @@ async function restartAdTx({ userId, adId }) {
 
     if (cur.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw httpError(404, { error: 'NOT_FOUND', message: 'ad not found' });
+      throw httpError(404, { error: ERROR_CODES.NOT_FOUND, message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
@@ -48,25 +49,28 @@ async function restartAdTx({ userId, adId }) {
     // ownership check (do not leak)
     if (!userId || String(ad.user_id) !== String(userId)) {
       await client.query('ROLLBACK');
-      throw httpError(404, { error: 'NOT_FOUND', message: 'ad not found' });
+      throw httpError(404, { error: ERROR_CODES.NOT_FOUND, message: 'ad not found' });
     }
 
     // contract rules
     if (ad.status === 'draft') {
       await client.query('ROLLBACK');
-      throw httpError(409, { error: 'NOT_ALLOWED', message: 'cannot restart draft' });
+      throw httpError(409, { error: ERROR_CODES.NOT_ALLOWED, message: 'cannot restart draft' });
     }
     if (ad.status === 'active') {
       await client.query('ROLLBACK');
-      throw httpError(409, { error: 'NOT_ALLOWED', message: 'cannot restart active ad' });
+      throw httpError(409, { error: ERROR_CODES.NOT_ALLOWED, message: 'cannot restart active ad' });
     }
     if (ad.status !== 'stopped') {
       await client.query('ROLLBACK');
-      throw httpError(409, { error: 'NOT_ALLOWED', message: 'cannot restart in this state' });
+      throw httpError(409, {
+        error: ERROR_CODES.NOT_ALLOWED,
+        message: 'cannot restart in this state'
+      });
     }
     if (ad.replaced_by_ad_id) {
       await client.query('ROLLBACK');
-      throw httpError(409, { error: 'NOT_ALLOWED', message: 'cannot restart replaced ad' });
+      throw httpError(409, { error: ERROR_CODES.NOT_ALLOWED, message: 'cannot restart replaced ad' });
     }
 
     // ✅ IMPORTANT: UPDATE must run on SAME client in SAME tx
@@ -88,11 +92,12 @@ async function restartAdTx({ userId, adId }) {
     try {
       await client.query('ROLLBACK');
     } catch {}
+
     // bubble known http errors as-is
     if (e && e.status && e.body) throw e;
 
     // unknown db error -> align with controller contract
-    throw httpError(500, { error: 'DB_ERROR', message: e?.message || 'db error' });
+    throw httpError(500, { error: ERROR_CODES.DB_ERROR, message: e?.message || 'db error' });
   } finally {
     client.release();
   }

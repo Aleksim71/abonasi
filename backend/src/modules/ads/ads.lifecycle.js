@@ -12,6 +12,7 @@
 const pool = require('../../db/pool'); // ⚠️ поправь путь под твой проект
 const Q = require('./ads.queries');
 const { mapAdRow } = require('./ads.mappers');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 function err(code, message, extra) {
   const e = new Error(message || code);
@@ -57,11 +58,11 @@ async function createDraft({ userId, payload }) {
 async function updateDraft({ userId, adId, patch }) {
   return withTx(async (client) => {
     const cur = await Q.lockAdById(client, adId);
-    if (!cur) throw err('NOT_FOUND', 'ad not found');
+    if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'draft') {
       // draft-only rule enforced also by trigger, но тут даём понятную ошибку
-      throw err('NOT_ALLOWED', 'only draft can be updated');
+      throw err(ERROR_CODES.NOT_ALLOWED, 'only draft can be updated');
     }
 
     const row = await Q.updateDraftAd(client, adId, patch);
@@ -73,10 +74,10 @@ async function updateDraft({ userId, adId, patch }) {
 async function publish({ userId, adId }) {
   return withTx(async (client) => {
     const cur = await Q.lockAdById(client, adId);
-    if (!cur) throw err('NOT_FOUND', 'ad not found');
+    if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'draft') {
-      throw err('NOT_ALLOWED', 'only draft can be published');
+      throw err(ERROR_CODES.NOT_ALLOWED, 'only draft can be published');
     }
 
     // статус меняется не-draft апдейтом → разрешаем в рамках tx
@@ -91,10 +92,10 @@ async function publish({ userId, adId }) {
 async function stop({ userId, adId }) {
   return withTx(async (client) => {
     const cur = await Q.lockAdById(client, adId);
-    if (!cur) throw err('NOT_FOUND', 'ad not found');
+    if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'active') {
-      throw err('NOT_ALLOWED', 'only active can be stopped');
+      throw err(ERROR_CODES.NOT_ALLOWED, 'only active can be stopped');
     }
 
     await allowNonDraftUpdates(client);
@@ -117,17 +118,17 @@ async function stop({ userId, adId }) {
 async function restart({ userId, adId, checkConflict }) {
   return withTx(async (client) => {
     const cur = await Q.lockAdById(client, adId);
-    if (!cur) throw err('NOT_FOUND', 'ad not found');
+    if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'stopped') {
       // ✅ именно NOT_ALLOWED для неправильного статуса
-      throw err('NOT_ALLOWED', 'only stopped can be restarted');
+      throw err(ERROR_CODES.NOT_ALLOWED, 'only stopped can be restarted');
     }
 
     // ✅ CONFLICT только если реально есть конфликт по доменной логике
     if (typeof checkConflict === 'function') {
       const conflict = await checkConflict({ client, adRow: cur });
-      if (conflict) throw err('CONFLICT', 'restart conflict', conflict);
+      if (conflict) throw err(ERROR_CODES.CONFLICT, 'restart conflict', conflict);
     }
 
     await allowNonDraftUpdates(client);
@@ -141,11 +142,11 @@ async function restart({ userId, adId, checkConflict }) {
 async function fork({ userId, adId }) {
   return withTx(async (client) => {
     const source = await Q.lockAdById(client, adId);
-    if (!source) throw err('NOT_FOUND', 'ad not found');
+    if (!source) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     // ⚠️ Подстрой правила: обычно форкают active или stopped — как у тебя в тесте.
     if (source.status !== 'active' && source.status !== 'stopped') {
-      throw err('NOT_ALLOWED', 'only active/stopped can be forked');
+      throw err(ERROR_CODES.NOT_ALLOWED, 'only active/stopped can be forked');
     }
 
     // Важно: форк — это insert (триггер draft-only не мешает), но если ты делаешь апдейт source —

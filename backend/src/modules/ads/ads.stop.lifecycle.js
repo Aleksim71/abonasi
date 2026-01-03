@@ -9,6 +9,7 @@
  */
 
 const pool = require('../../db/pool');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 function httpError(status, body) {
   const e = new Error(body?.message || body?.error || 'ERROR');
@@ -37,7 +38,7 @@ async function stopAdTx({ userId, adId }) {
 
     if (!cur.rowCount) {
       await client.query('ROLLBACK');
-      throw httpError(404, { error: 'NOT_FOUND', message: 'ad not found' });
+      throw httpError(404, { error: ERROR_CODES.NOT_FOUND, message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
@@ -45,7 +46,7 @@ async function stopAdTx({ userId, adId }) {
     if (ad.status !== 'active') {
       await client.query('ROLLBACK');
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'only active ads can be stopped'
       });
     }
@@ -64,7 +65,7 @@ async function stopAdTx({ userId, adId }) {
     if (!r.rowCount) {
       await client.query('ROLLBACK');
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'cannot stop this ad'
       });
     }
@@ -78,13 +79,13 @@ async function stopAdTx({ userId, adId }) {
 
     // preserve special-case behavior
     if (err && err.code === '45000') {
-      throw httpError(409, { error: 'NOT_ALLOWED', message: String(err.message || err) });
+      throw httpError(409, { error: ERROR_CODES.NOT_ALLOWED, message: String(err.message || err) });
     }
 
     // bubble known http errors as-is
     if (err && err.status && err.body) throw err;
 
-    throw httpError(500, { error: 'DB_ERROR', message: String(err?.message || err) });
+    throw httpError(500, { error: ERROR_CODES.DB_ERROR, message: String(err?.message || err) });
   } finally {
     client.release();
   }

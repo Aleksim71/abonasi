@@ -1,6 +1,7 @@
 'use strict';
 
 const { txError } = require('../../utils/httpError');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 /**
  * ads.fork.lifecycle.js
@@ -24,7 +25,11 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if ((photosCnt.rows[0]?.cnt ?? 0) === 0) {
-      throw txError(409, 'NOT_ALLOWED', 'cannot edit published ad: at least one photo is required');
+      throw txError(
+        409,
+        ERROR_CODES.NOT_ALLOWED,
+        'cannot edit published ad: at least one photo is required'
+      );
     }
   }
 
@@ -82,7 +87,7 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if (!stopped.rowCount) {
-      throw txError(409, 'NOT_ALLOWED', 'cannot replace this ad');
+      throw txError(409, ERROR_CODES.NOT_ALLOWED, 'cannot replace this ad');
     }
   } else {
     const linked = await client.query(
@@ -96,7 +101,7 @@ async function forkNonDraft({ client, userId, adId, oldAd, patch }) {
     );
 
     if (!linked.rowCount) {
-      throw txError(409, 'NOT_ALLOWED', 'cannot replace this ad');
+      throw txError(409, ERROR_CODES.NOT_ALLOWED, 'cannot replace this ad');
     }
   }
 

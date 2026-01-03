@@ -9,6 +9,7 @@
  */
 
 const pool = require('../../db/pool');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 function httpError(status, body) {
   const e = new Error(body?.message || body?.error || 'ERROR');
@@ -31,9 +32,12 @@ async function createDraftTx({ userId, locationId, title, description, priceCent
     return r.rows[0];
   } catch (err) {
     if (err && err.code === '23503') {
-      throw httpError(400, { error: 'BAD_REQUEST', message: 'locationId does not exist' });
+      throw httpError(400, {
+        error: ERROR_CODES.BAD_REQUEST,
+        message: 'locationId does not exist'
+      });
     }
-    throw httpError(500, { error: 'DB_ERROR', message: String(err?.message || err) });
+    throw httpError(500, { error: ERROR_CODES.DB_ERROR, message: String(err?.message || err) });
   }
 }
 
