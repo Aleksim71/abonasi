@@ -1,0 +1,12 @@
+'use strict';
+
+const ERROR_CODES = Object.freeze({
+  BAD_REQUEST: 'BAD_REQUEST',
+  NOT_ALLOWED: 'NOT_ALLOWED',
+  CONFLICT: 'CONFLICT',
+  NOT_FOUND: 'NOT_FOUND',
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  DB_ERROR: 'DB_ERROR'
+});
+
+module.exports = { ERROR_CODES };

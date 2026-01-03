@@ -1,15 +1,16 @@
 'use strict';
 
 const { txError } = require('../../utils/httpError');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 /**
+ * ads.draftUpdate.lifecycle.js
  * Extract draft-update branch from updateAd.
  * Controller owns transaction BEGIN/COMMIT/ROLLBACK.
  *
- * IMPORTANT:
- * - throws TxError (err.status + err.body) for early exits (controller will ROLLBACK + respond)
+ * Returns: { ok: true, row }
+ * Throws: TxError (err.status + err.body) on rule violations
  */
-
 async function updateDraftAd({ client, userId, adId, patch }) {
   const r = await client.query(
     `
@@ -28,7 +29,7 @@ async function updateDraftAd({ client, userId, adId, patch }) {
   );
 
   if (!r.rowCount) {
-    throw txError(409, 'NOT_ALLOWED', 'only own draft ads can be edited');
+    throw txError(409, ERROR_CODES.NOT_ALLOWED, 'only own draft ads can be edited');
   }
 
   return { ok: true, row: r.rows[0] };
