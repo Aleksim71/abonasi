@@ -1,117 +1,87 @@
-# API CONTRACT — Abonasi (MVP)
+# Abonasi API Contract (v1)
 
-Base URL: /api
-Auth: JWT (Authorization: Bearer)
-
----
-
-## 🔐 Auth
-
-### POST /auth/register
-Request:
-{
-  "email": "string",
-  "password": "string",
-  "name": "string"
-}
-
-Response:
-{
-  "id": "uuid",
-  "email": "string",
-  "name": "string"
-}
+This document defines the **public HTTP API contract** of the Abonasi backend.
+It is the single source of truth for frontend and mobile clients.
 
 ---
 
-### POST /auth/login
-Request:
-{
-  "email": "string",
-  "password": "string"
-}
+## Goals
 
-Response:
-{
-  "token": "jwt"
-}
+- Stable API for frontend & mobile apps
+- Predictable error handling
+- Backward compatibility inside v1
+- Alignment with integration tests
 
 ---
 
-### GET /auth/me
-Response:
+## 1. Conventions
+
+### Base URL
+/api
+
+### Content-Type
+- Requests: application/json
+- Responses: application/json
+
+---
+
+## 2. Response Format
+
+### Success (2xx)
+
+```json
 {
-  "id": "uuid",
-  "email": "string",
-  "name": "string"
+  "ok": true,
+  "data": {}
 }
+```
 
----
+### Error (non-2xx)
 
-## 📢 Ads
-
-### POST /ads
-Create draft ad.
-
-Request:
+```json
 {
-  "title": "string",
-  "description": "string",
-  "price": number,
-  "locationId": "uuid"
+  "error": "ERROR_CODE",
+  "message": "Human readable message"
 }
-
-Response:
-{
-  "id": "uuid",
-  "status": "draft"
-}
+```
 
 ---
 
-### POST /ads/{id}/publish
-Response:
-{
-  "status": "active",
-  "publishedAt": "datetime"
-}
+## 3. ERROR_CODES
+
+BAD_REQUEST  
+UNAUTHORIZED  
+NOT_FOUND  
+NOT_ALLOWED  
+CONFLICT  
+DB_ERROR  
+INTERNAL_ERROR
 
 ---
 
-### POST /ads/{id}/stop
-Response:
-{
-  "status": "stopped"
-}
+## 4. Auth API
+
+POST /api/auth/register  
+POST /api/auth/login
 
 ---
 
-### GET /ads/my
-Response:
-[
-  {
-    "id": "uuid",
-    "title": "string",
-    "status": "draft|active|stopped"
-  }
-]
+## 5. Ads API
+
+POST /api/ads  
+POST /api/ads/:id/publish  
+POST /api/ads/:id/stop  
+POST /api/ads/:id/restart  
+POST /api/ads/:id/fork  
+GET /api/ads/my  
+GET /api/ads/feed  
+GET /api/ads/:id/versions
 
 ---
 
-### GET /ads?locationId=UUID
-Public feed by district.
+## 6. Locations API
 
----
-
-## 📍 Locations
-
-### GET /locations
-Response:
-[
-  {
-    "id": "uuid",
-    "country": "string",
-    "city": "string",
-    "district": "string"
-  }
-]
+GET /api/locations/countries  
+GET /api/locations/cities  
+GET /api/locations/districts  
+GET /api/locations/resolve
