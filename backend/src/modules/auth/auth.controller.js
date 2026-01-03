@@ -1,24 +1,25 @@
 'use strict';
 
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const { pool } = require('../../config/db');
 
-const SALT_ROUNDS = 12;
+const { handleHttpError } = require('../../utils/handleHttpError');
+const { HttpError } = require('../../utils/httpError');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
-function normalizeEmail(email) {
-  return String(email || '')
-    .trim()
-    .toLowerCase();
+const { hashPassword, verifyPassword, signToken } = require('./auth.utils');
+
+function isNonEmptyString(x) {
+  return typeof x === 'string' && x.trim().length > 0;
 }
 
-function signToken(user) {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) throw new Error('Missing env var: JWT_SECRET');
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
 
-  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
-
-  return jwt.sign({ email: user.email, name: user.name }, secret, { subject: user.id, expiresIn });
+function safeUser(row) {
+  if (!row) return null;
+  const { password_hash, passwordHash, ...safe } = row;
+  return safe;
 }
 
 /**
@@ -26,44 +27,45 @@ function signToken(user) {
  * body: { email, password, name }
  */
 async function register(req, res) {
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || '');
-  const name = String(req.body.name || '').trim();
-
-  if (!email || !password || !name) {
-    return res
-      .status(400)
-      .json({ error: 'BAD_REQUEST', message: 'email, password, name are required' });
-  }
-
-  if (password.length < 8) {
-    return res
-      .status(400)
-      .json({ error: 'BAD_REQUEST', message: 'password must be at least 8 chars' });
-  }
+  const scope = 'auth.register';
 
   try {
-    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const name = String(req.body?.name || '').trim();
 
-    const r = await pool.query(
-      `
-      INSERT INTO users (email, password_hash, name)
-      VALUES ($1, $2, $3)
-      RETURNING id, email, name, created_at
-      `,
-      [email, passwordHash, name]
-    );
-
-    const user = r.rows[0];
-    const token = signToken(user);
-
-    return res.status(201).json({ user, token });
-  } catch (err) {
-    // unique violation on users.email
-    if (err && err.code === '23505') {
-      return res.status(409).json({ error: 'CONFLICT', message: 'email already registered' });
+    if (!isNonEmptyString(email) || !email.includes('@')) {
+      throw new HttpError(400, ERROR_CODES.BAD_REQUEST, 'email is required');
     }
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    if (!isNonEmptyString(password) || password.length < 6) {
+      throw new HttpError(400, ERROR_CODES.BAD_REQUEST, 'password must be at least 6 chars');
+    }
+    if (!isNonEmptyString(name)) {
+      throw new HttpError(400, ERROR_CODES.BAD_REQUEST, 'name is required');
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    const client = await pool.connect();
+    try {
+      const insert = await client.query(
+        `
+        INSERT INTO users (email, password_hash, name)
+        VALUES ($1, $2, $3)
+        RETURNING id, email, name, created_at
+        `,
+        [email, passwordHash, name]
+      );
+
+      const user = insert.rows[0];
+      const token = signToken({ id: user.id, email: user.email, name: user.name });
+
+      return res.status(201).json({ ok: true, user: safeUser(user), token });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    return handleHttpError(res, err, { scope });
   }
 }
 
@@ -72,48 +74,84 @@ async function register(req, res) {
  * body: { email, password }
  */
 async function login(req, res) {
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || '');
-
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ error: 'BAD_REQUEST', message: 'email and password are required' });
-  }
+  const scope = 'auth.login';
 
   try {
-    const r = await pool.query(
-      `SELECT id, email, name, password_hash FROM users WHERE email = $1 LIMIT 1`,
-      [email]
-    );
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
 
-    if (r.rowCount === 0) {
-      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'invalid credentials' });
+    if (!isNonEmptyString(email) || !email.includes('@')) {
+      throw new HttpError(400, ERROR_CODES.BAD_REQUEST, 'email is required');
+    }
+    if (!isNonEmptyString(password)) {
+      throw new HttpError(400, ERROR_CODES.BAD_REQUEST, 'password is required');
     }
 
-    const user = r.rows[0];
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) {
-      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'invalid credentials' });
+    const client = await pool.connect();
+    try {
+      const q = await client.query(
+        `
+        SELECT id, email, name, password_hash, created_at
+        FROM users
+        WHERE email = $1
+        LIMIT 1
+        `,
+        [email]
+      );
+
+      const user = q.rows[0];
+      if (!user) {
+        throw new HttpError(401, ERROR_CODES.UNAUTHORIZED, 'invalid credentials');
+      }
+
+      const ok = await verifyPassword(password, user.password_hash);
+      if (!ok) {
+        throw new HttpError(401, ERROR_CODES.UNAUTHORIZED, 'invalid credentials');
+      }
+
+      const token = signToken({ id: user.id, email: user.email, name: user.name });
+
+      return res.status(200).json({ ok: true, user: safeUser(user), token });
+    } finally {
+      client.release();
     }
-
-    const token = signToken(user);
-
-    return res.json({
-      user: { id: user.id, email: user.email, name: user.name },
-      token
-    });
   } catch (err) {
-    return res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope });
   }
 }
 
 /**
  * GET /api/auth/me
- * requires Bearer token
+ * requires auth middleware (req.user)
  */
 async function me(req, res) {
-  return res.json({ user: req.user });
+  const scope = 'auth.me';
+
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      throw new HttpError(401, ERROR_CODES.UNAUTHORIZED, 'unauthorized');
+    }
+
+    const q = await pool.query(
+      `
+      SELECT id, email, name, created_at
+      FROM users
+      WHERE id = $1
+      `,
+      [userId]
+    );
+
+    const user = q.rows[0];
+    if (!user) {
+      throw new HttpError(401, ERROR_CODES.UNAUTHORIZED, 'unauthorized');
+    }
+
+    return res.status(200).json({ ok: true, user: safeUser(user) });
+  } catch (err) {
+    return handleHttpError(res, err, { scope });
+  }
 }
 
 module.exports = {
