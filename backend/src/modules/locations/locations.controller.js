@@ -1,6 +1,8 @@
+
 'use strict';
 
 const { pool } = require('../../config/db');
+const { handleHttpError } = require('../../utils/handleHttpError');
 
 /**
  * GET /api/locations
@@ -38,9 +40,9 @@ async function listLocations(req, res) {
 
   try {
     const result = await pool.query(sql, values);
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'locations.listLocations' });
   }
 }
 
@@ -51,9 +53,9 @@ async function listLocations(req, res) {
 async function listCountries(req, res) {
   try {
     const r = await pool.query(`SELECT DISTINCT country FROM locations ORDER BY country ASC`);
-    res.json(r.rows.map((x) => x.country));
+    return res.json(r.rows.map((x) => x.country));
   } catch (err) {
-    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'locations.listCountries' });
   }
 }
 
@@ -63,17 +65,18 @@ async function listCountries(req, res) {
  */
 async function listCities(req, res) {
   const { country } = req.query;
-  if (!country)
+  if (!country) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'country is required' });
+  }
 
   try {
     const r = await pool.query(
       `SELECT DISTINCT city FROM locations WHERE country = $1 ORDER BY city ASC`,
       [country]
     );
-    res.json(r.rows.map((x) => x.city));
+    return res.json(r.rows.map((x) => x.city));
   } catch (err) {
-    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'locations.listCities' });
   }
 }
 
@@ -97,9 +100,9 @@ async function listDistricts(req, res) {
       `,
       [country, city]
     );
-    res.json(r.rows);
+    return res.json(r.rows);
   } catch (err) {
-    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'locations.listDistricts' });
   }
 }
 
@@ -134,9 +137,9 @@ async function resolveLocation(req, res) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'location not found' });
     }
 
-    res.json(r.rows[0]);
+    return res.json(r.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: 'DB_ERROR', message: String(err.message || err) });
+    return handleHttpError(res, err, { scope: 'locations.resolveLocation' });
   }
 }
 

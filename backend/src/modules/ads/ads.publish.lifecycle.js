@@ -9,6 +9,7 @@
  */
 
 const pool = require('../../db/pool');
+const { ERROR_CODES } = require('../../utils/errorCodes');
 
 function httpError(status, body) {
   const e = new Error(body?.message || body?.error || 'ERROR');
@@ -30,14 +31,14 @@ async function publishAdTx({ userId, adId }) {
     );
 
     if (!cur.rowCount) {
-      throw httpError(404, { error: 'NOT_FOUND', message: 'ad not found' });
+      throw httpError(404, { error: ERROR_CODES.NOT_FOUND, message: 'ad not found' });
     }
 
     const ad = cur.rows[0];
 
     if (ad.status !== 'draft') {
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'only draft ads can be published'
       });
     }
@@ -47,14 +48,14 @@ async function publishAdTx({ userId, adId }) {
 
     if (title.length < 3 || title.length > 120) {
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'cannot publish: title must be 3..120 chars'
       });
     }
 
     if (description.length < 10 || description.length > 5000) {
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'cannot publish: description must be 10..5000 chars'
       });
     }
@@ -70,7 +71,7 @@ async function publishAdTx({ userId, adId }) {
 
     if (photos.rows[0].cnt === 0) {
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'cannot publish: at least one photo is required'
       });
     }
@@ -89,7 +90,7 @@ async function publishAdTx({ userId, adId }) {
 
     if (!r.rowCount) {
       throw httpError(409, {
-        error: 'NOT_ALLOWED',
+        error: ERROR_CODES.NOT_ALLOWED,
         message: 'cannot publish this ad'
       });
     }
@@ -97,7 +98,7 @@ async function publishAdTx({ userId, adId }) {
     return r.rows[0];
   } catch (err) {
     if (err && err.status && err.body) throw err;
-    throw httpError(500, { error: 'DB_ERROR', message: String(err?.message || err) });
+    throw httpError(500, { error: ERROR_CODES.DB_ERROR, message: String(err?.message || err) });
   }
 }
 
