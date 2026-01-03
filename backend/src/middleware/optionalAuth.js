@@ -3,41 +3,64 @@
 const jwt = require('jsonwebtoken');
 
 /**
+ * Extract Bearer token from Authorization header.
+ * Returns token string or null.
+ */
+function getBearerToken(req) {
+  const header = req.headers.authorization || '';
+  const [type, ...rest] = header.split(' ');
+
+  if (type !== 'Bearer') return null;
+
+  const token = rest.join(' ').trim();
+  if (!token) return null;
+
+  return token;
+}
+
+/**
+ * Resolve user id from JWT payload.
+ * Supports common shapes: { sub }, { userId }, { id }.
+ */
+function getUserId(payload) {
+  return payload?.sub || payload?.userId || payload?.id || null;
+}
+
+/**
  * Optional JWT auth:
- * - valid token -> req.user = { id, email, name }
+ * - valid token -> req.user = { id, email?, name? }
  * - missing/invalid token -> req.user = null
  */
 function optionalAuth(req, _res, next) {
-  const header = req.headers.authorization || '';
+  const token = getBearerToken(req);
 
-  if (!header.startsWith('Bearer ')) {
+  if (!token) {
     req.user = null;
     return next();
   }
 
-  const token = header.slice('Bearer '.length).trim();
-
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
-    const id = payload.sub || payload.userId || payload.id;
+    const id = getUserId(payload);
     if (!id) {
       req.user = null;
       return next();
     }
 
-    req.user = {
-      id: String(id),
-      email: payload.email,
-      name: payload.name
-    };
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('[optionalAuth] JWT error:', err.message);
-    req.user = null;
-  }
+    // Keep contract flexible: minimum { id }
+    req.user = { id: String(id) };
 
-  return next();
+    // Optional fields (if present in token)
+    if (payload.email) req.user.email = payload.email;
+    if (payload.name) req.user.name = payload.name;
+
+    return next();
+  } catch (_err) {
+    // Silent fail for optional auth
+    req.user = null;
+    return next();
+  }
 }
 
 module.exports = { optionalAuth };
