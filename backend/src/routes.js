@@ -3,12 +3,9 @@
 const express = require('express');
 const { dbHealthcheck } = require('./config/db');
 
-const locationsRoutes = require('./modules/locations/locations.routes');
-const authRoutes = require('./modules/auth/auth.routes');
-const adsRoutes = require('./modules/ads/ads.routes');
-
 const router = express.Router();
 
+// Health
 router.get('/health', async (req, res) => {
   const uptimeSec = Math.round(process.uptime());
 
@@ -30,8 +27,9 @@ router.get('/health', async (req, res) => {
   }
 });
 
-router.use('/locations', locationsRoutes);
-router.use('/auth', authRoutes);
-router.use('/ads', adsRoutes);
+// Modules
+router.use('/auth', require('./modules/auth/auth.routes'));
+router.use('/locations', require('./modules/locations/locations.routes'));
+router.use('/ads', require('./modules/ads/ads.routes'));
 
 module.exports = router;
