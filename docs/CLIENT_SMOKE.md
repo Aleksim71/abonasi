@@ -1,79 +1,84 @@
-# Client smoke scenarios (D9)
+# Abonasi Backend — Client Smoke (D11)
 
-This document describes a minimal “client-side” smoke flow for Abonasi.
+Цель: за 2–5 минут проверить, что backend “живой” и контракт API совпадает с OpenAPI + Swagger UI.
 
-The goal is to validate that a frontend/mobile client can:
-- register/login
-- create a draft ad
-- attach at least one photo to the draft
-- publish the ad
-- read public card + versions timeline without auth
+## Endpoints (локально)
 
----
+- Health: `GET /api/health`
+- Swagger UI: `GET /docs`
+- OpenAPI spec: `GET /openapi.yaml`
 
-## Prerequisites
+## Контракт ответов (важно)
 
-- Backend is running locally (default): `http://localhost:3001`
-- DB is migrated/seeded so that `GET /api/locations` returns at least one location
-- `jq` installed
+- **Success**: `{ "data": ... }`
+- **Error**: `{ "error": "STRING", "message": "STRING" }`
 
 ---
 
-## Run
+## 1) Быстрый smoke через curl (рекомендуемый)
 
-From repo root:
+### Требования
+
+- `curl`, `jq`
+- backend запущен (например: `cd backend && npm run dev`)
+
+### Скрипт smoke
 
 ```bash
-bash docs/client-smoke.sh
-```
+set -euo pipefail
 
-Or with custom base URL:
+BASE="${BASE:-http://localhost:3001}"
+echo "BASE=$BASE"
 
-```bash
-API_BASE=http://localhost:3001 bash docs/client-smoke.sh
+echo "== health"
+curl -s "$BASE/api/health" | jq .
+
+echo "== register"
+STAMP=$(date +%s)
+EMAIL="smoke_${STAMP}@example.com"
+PASS="password123"
+NAME="Smoke User"
+
+REGISTER_JSON=$(curl -s -X POST "$BASE/api/auth/register"   -H "Content-Type: application/json"   -d "{"email":"$EMAIL","password":"$PASS","name":"$NAME"}")
+
+echo "$REGISTER_JSON" | jq .
+TOKEN=$(echo "$REGISTER_JSON" | jq -r '.data.token // empty')
+
+if [ -z "${TOKEN:-}" ]; then
+  echo "[FAIL] TOKEN is empty. Register response does not contain token."
+  exit 1
+fi
+
+echo "== /me (auth)"
+curl -s "$BASE/api/auth/me"   -H "Authorization: Bearer $TOKEN" | jq .
+
+echo "== pick locationId (db helper)"
+LOCATION_ID=$(psqlabonasi_prod -Atc "select id from locations limit 1;")
+echo "LOCATION_ID=$LOCATION_ID"
+
+echo "== create draft ad"
+CREATE_JSON=$(curl -s -X POST "$BASE/api/ads"   -H "Content-Type: application/json"   -H "Authorization: Bearer $TOKEN"   -d "{
+    "locationId":"$LOCATION_ID",
+    "title":"Smoke ad",
+    "description":"Hello! This is a smoke test ad.",
+    "priceCents": null
+  }")
+
+echo "$CREATE_JSON" | jq .
+AD_ID=$(echo "$CREATE_JSON" | jq -r '.data.id // empty')
+echo "AD_ID=$AD_ID"
 ```
 
 ---
 
-## Scenario steps (what script does)
+## 2) Swagger UI smoke (Try it out)
 
-1) **Register**
-- `POST /api/auth/register`
-- body: `{ email, password, name }`
-
-2) **Login**
-- `POST /api/auth/login`
-- body: `{ email, password }`
-- expects: `data.token`
-
-3) **Resolve a location**
-- `GET /api/locations`
-- uses first location id as `locationId`
-
-4) **Create draft**
-- `POST /api/ads` (auth)
-- body: `{ locationId, title, description, priceCents }`
-- expects: `data.id` (adId)
-
-5) **Attach photo to draft**
-- `POST /api/ads/:id/photos` (auth)
-- current design attaches a DB record with `filePath` (no binary upload):
-  - body: `{ filePath: "uploads/<something>.jpg" }`
-- expects: `data.photos.length >= 1`
-
-6) **Publish**
-- `POST /api/ads/:id/publish` (auth)
-- expects: `data.status === "active"`
-
-7) **Read public card**
-- `GET /api/ads/:id` (optional auth, script calls without auth)
-
-8) **Read versions timeline**
-- `GET /api/ads/:id/versions` (optional auth, script calls without auth)
+1. Открой `http://localhost:3001/docs`
+2. Нажми **Authorize** → `Bearer <JWT_TOKEN>`
+3. Прогони endpoints по порядку (health → auth → ads lifecycle)
 
 ---
 
-## Notes
+## Done
 
-- If later you implement real file uploads (multipart), update step (5) accordingly.
-- If `/api/locations` response shape changes, adjust the jq path in `docs/client-smoke.sh`.
+Если smoke проходит без ошибок — backend готов к frontend-интеграции.
