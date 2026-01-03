@@ -1,463 +1,15 @@
 openapi: 3.0.3
 info:
-  title: Abonasi Backend API
-  version: "1.0.0"
-  description: >
-    Public HTTP API contract for Abonasi (v1).
-
-    Conventions:
-    - All successful responses return JSON with `{ data: ... }`.
-    - All error responses return JSON with `{ error: STRING, message: STRING }`.
+  title: Abonasi API
+  version: 0.1.0
 servers:
-  - url: /api
+  - url: /
 
 tags:
+  - name: Health
   - name: Auth
   - name: Locations
   - name: Ads
-  - name: Docs
-
-paths:
-  /openapi.yaml:
-    get:
-      tags: [Docs]
-      summary: Download raw OpenAPI spec (YAML)
-      responses:
-        "200":
-          description: OpenAPI YAML
-          content:
-            text/yaml:
-              schema:
-                type: string
-
-  /docs:
-    get:
-      tags: [Docs]
-      summary: Swagger UI
-      responses:
-        "200":
-          description: HTML
-
-  /auth/register:
-    post:
-      tags: [Auth]
-      summary: Register new user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterRequest"
-      responses:
-        "200":
-          description: Registered + token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthTokenResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /auth/login:
-    post:
-      tags: [Auth]
-      summary: Login with email+password
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: Token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthTokenResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /auth/me:
-    get:
-      tags: [Auth]
-      summary: Current user info
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Current user
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/User"
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /locations:
-    get:
-      tags: [Locations]
-      summary: List locations (optional filters)
-      parameters:
-        - in: query
-          name: country
-          schema: { type: string }
-          required: false
-        - in: query
-          name: city
-          schema: { type: string }
-          required: false
-      responses:
-        "200":
-          description: Locations list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: "#/components/schemas/Location" }
-                required: [data]
-
-  /ads:
-    post:
-      tags: [Ads]
-      summary: Create draft ad
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateDraftRequest"
-      responses:
-        "200":
-          description: Draft created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/Ad"
-                required: [data]
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /ads/my:
-    get:
-      tags: [Ads]
-      summary: List my ads (owner)
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: My ads
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AdCard"
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /ads/feed:
-    get:
-      tags: [Ads]
-      summary: Public feed (optional auth)
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Feed list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AdCard"
-                required: [data]
-
-  /ads/{id}:
-    get:
-      tags: [Ads]
-      summary: Get ad by id (public card)
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Ad details
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AdWithPhotos" }
-                required: [data]
-        "404":
-          $ref: "#/components/responses/NotFound"
-    patch:
-      tags: [Ads]
-      summary: Update ad (draft only)
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateAdRequest"
-      responses:
-        "200":
-          description: Updated draft
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/Ad" }
-                required: [data]
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/publish:
-    post:
-      tags: [Ads]
-      summary: Publish draft -> active
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Published
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/Ad" }
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/stop:
-    post:
-      tags: [Ads]
-      summary: Stop active -> stopped
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Stopped
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/Ad" }
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/restart:
-    post:
-      tags: [Ads]
-      summary: Restart stopped -> active (if not replaced)
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Restarted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/Ad" }
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/versions:
-    get:
-      tags: [Ads]
-      summary: Ad versions timeline (optional auth)
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Versions list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/AdVersionsResponse"
-                required: [data]
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /ads/{id}/photos:
-    post:
-      tags: [Ads]
-      summary: Add photo to draft
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AddPhotoRequest"
-      responses:
-        "200":
-          description: Photos list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      adId: { type: string, format: uuid }
-                      photos:
-                        type: array
-                        items: { $ref: "#/components/schemas/AdPhoto" }
-                    required: [adId, photos]
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/photos/{photoId}:
-    delete:
-      tags: [Ads]
-      summary: Delete photo from draft
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-        - in: path
-          name: photoId
-          required: true
-          schema: { type: string, format: uuid }
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Photos list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      adId: { type: string, format: uuid }
-                      photos:
-                        type: array
-                        items: { $ref: "#/components/schemas/AdPhoto" }
-                    required: [adId, photos]
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /ads/{id}/photos/reorder:
-    patch:
-      tags: [Ads]
-      summary: Reorder photos in draft
-      parameters:
-        - $ref: "#/components/parameters/AdId"
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReorderPhotosRequest"
-      responses:
-        "200":
-          description: Photos list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      adId: { type: string, format: uuid }
-                      photos:
-                        type: array
-                        items: { $ref: "#/components/schemas/AdPhoto" }
-                    required: [adId, photos]
-                required: [data]
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
 
 components:
   securitySchemes:
@@ -466,216 +18,352 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
-  parameters:
-    AdId:
-      in: path
-      name: id
-      required: true
-      schema:
-        type: string
-        format: uuid
-
-  responses:
-    BadRequest:
-      description: Bad request
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Unauthorized:
-      description: Unauthorized
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    NotFound:
-      description: Not found
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Conflict:
-      description: Conflict / Not allowed
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-
   schemas:
-    ErrorResponse:
+    Error:
       type: object
-      properties:
-        error:
-          type: string
-          example: UNAUTHORIZED
-        message:
-          type: string
-          example: Missing Bearer token
       required: [error, message]
-
-    User:
-      type: object
       properties:
-        id: { type: string, format: uuid }
-        email: { type: string, format: email }
-        name: { type: string }
-      required: [id, email]
+        error: { type: string }
+        message: { type: string }
 
-    RegisterRequest:
+    Health:
       type: object
+      required: [status, uptimeSec, db]
+      properties:
+        status: { type: string }
+        uptimeSec: { type: integer }
+        db:
+          type: object
+          properties:
+            ok: { type: boolean }
+            latencyMs: { type: integer }
+
+    AuthRegisterRequest:
+      type: object
+      required: [email, password, name]
       properties:
         email: { type: string, format: email }
         password: { type: string, minLength: 6 }
-        name: { type: string }
-      required: [email, password]
+        name: { type: string, minLength: 1 }
 
-    LoginRequest:
+    AuthLoginRequest:
       type: object
+      required: [email, password]
       properties:
         email: { type: string, format: email }
-        password: { type: string }
-      required: [email, password]
+        password: { type: string, minLength: 6 }
 
-    AuthTokenResponse:
+    # TEMP: reflects current auth response shape ({ ok, user, token }).
+    # We'll change to { data } in PR1 and update this schema.
+    AuthSuccess:
       type: object
+      required: [ok, user, token]
       properties:
-        data:
+        ok: { type: boolean }
+        user:
           type: object
+          required: [id, email, name, created_at]
           properties:
-            token: { type: string }
-          required: [token]
-      required: [data]
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            name: { type: string }
+            created_at: { type: string, format: date-time }
+        token: { type: string }
 
-    Location:
+    CreateAdRequest:
       type: object
-      properties:
-        id: { type: string, format: uuid }
-        country: { type: string }
-        city: { type: string }
-        district: { type: string }
-      required: [id, country, city, district]
-
-    AdStatus:
-      type: string
-      enum: [draft, active, stopped]
-
-    MoneyCents:
-      oneOf:
-        - type: integer
-          minimum: 0
-        - type: "null"
-
-    Ad:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        ownerId: { type: string, format: uuid }
-        locationId: { type: string, format: uuid }
-        title: { type: string }
-        description: { type: string }
-        priceCents: { $ref: "#/components/schemas/MoneyCents" }
-        status: { $ref: "#/components/schemas/AdStatus" }
-        publishedAt:
-          oneOf:
-            - type: string
-              format: date-time
-            - type: "null"
-        stoppedAt:
-          oneOf:
-            - type: string
-              format: date-time
-            - type: "null"
-        replacedByAdId:
-          oneOf:
-            - type: string
-              format: uuid
-            - type: "null"
-      required: [id, locationId, status]
-
-    AdPhoto:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        filePath: { type: string }
-        sortOrder: { type: integer }
-      required: [id, filePath, sortOrder]
-
-    AdWithPhotos:
-      allOf:
-        - $ref: "#/components/schemas/Ad"
-        - type: object
-          properties:
-            photos:
-              type: array
-              items: { $ref: "#/components/schemas/AdPhoto" }
-          required: [photos]
-
-    AdCard:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        title: { type: string }
-        priceCents: { $ref: "#/components/schemas/MoneyCents" }
-        status: { $ref: "#/components/schemas/AdStatus" }
-        previewPhoto:
-          oneOf:
-            - type: string
-            - type: "null"
-        photosCount: { type: integer, minimum: 0 }
-        location:
-          type: object
-          properties:
-            country: { type: string }
-            city: { type: string }
-            district: { type: string }
-      required: [id, status, photosCount]
-
-    CreateDraftRequest:
-      type: object
+      required: [locationId, title, description]
       properties:
         locationId: { type: string, format: uuid }
-        title: { type: string }
-        description: { type: string }
-        priceCents: { $ref: "#/components/schemas/MoneyCents" }
-      required: [locationId, title]
-
-    UpdateAdRequest:
-      type: object
-      properties:
-        title: { type: string }
-        description: { type: string }
-        priceCents: { $ref: "#/components/schemas/MoneyCents" }
+        title: { type: string, minLength: 3, maxLength: 120 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        priceCents:
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
 
     AddPhotoRequest:
       type: object
-      properties:
-        filePath:
-          type: string
-          description: Server-side path (MVP). Later replaced with upload flow.
       required: [filePath]
-
-    ReorderPhotosRequest:
-      type: object
       properties:
-        photoIds:
-          type: array
-          items: { type: string, format: uuid }
-      required: [photoIds]
+        filePath: { type: string, minLength: 3, maxLength: 500 }
+        sortOrder: { type: integer, minimum: 0, maximum: 50 }
 
-    AdVersionsResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/AdCard" }
-        latestPublishedAdId:
-          oneOf:
-            - type: string
-              format: uuid
-            - type: "null"
-        currentPublishedAdId:
-          oneOf:
-            - type: string
-              format: uuid
-            - type: "null"
-      required: [items]
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Healthcheck
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Degraded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register and get JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthRegisterRequest" }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSuccess" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login and get JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthLoginRequest" }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSuccess" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/locations:
+    get:
+      tags: [Locations]
+      security: []
+      summary: List locations
+      parameters:
+        - in: query
+          name: country
+          schema: { type: string }
+        - in: query
+          name: city
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads:
+    post:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Create draft ad
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAdRequest" }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/ads/my:
+    get:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: List my ads
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/feed:
+    get:
+      tags: [Ads]
+      security: []
+      summary: Public feed (optionalAuth)
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}:
+    get:
+      tags: [Ads]
+      security: []
+      summary: Get ad by id (optionalAuth)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+    patch:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Update ad (draft update or fork)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}/publish:
+    post:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Publish ad
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+        "409":
+          description: Not allowed / conflict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/ads/{id}/stop:
+    post:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Stop ad
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}/restart:
+    post:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Restart ad
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}/versions:
+    get:
+      tags: [Ads]
+      security: []
+      summary: Ad versions timeline (optionalAuth)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}/photos:
+    post:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Add photo to draft
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddPhotoRequest" }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/ads/{id}/photos/reorder:
+    patch:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Reorder photos in draft
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+
+  /api/ads/{id}/photos/{photoId}:
+    delete:
+      tags: [Ads]
+      security:
+        - bearerAuth: []
+      summary: Delete photo from draft
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: photoId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
