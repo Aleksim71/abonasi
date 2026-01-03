@@ -1,17 +1,14 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const { logger } = require('../utils/logger');
 
+/**
+ * Required JWT auth:
+ * - missing/invalid token -> 401
+ * - valid token -> req.user = { id, email, name }
+ */
 function requireAuth(req, res, next) {
   try {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      // misconfig => 500, not "unauthorized"
-      logger.error('auth.require', 'JWT_SECRET is missing');
-      return res.status(500).json({ error: 'INTERNAL_ERROR', message: 'server misconfigured' });
-    }
-
     const header = req.headers.authorization || '';
     const [type, token] = header.split(' ');
 
@@ -19,18 +16,24 @@ function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Missing Bearer token' });
     }
 
-    const payload = jwt.verify(token, secret);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
 
-    // keep current contract (id/email/name)
+    // Canonical user mapping (keep stable shape)
+    const id = payload.sub || payload.userId || payload.id;
+    if (!id) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid token' });
+    }
+
     req.user = {
-      id: payload.sub,
+      id: String(id),
       email: payload.email,
       name: payload.name
     };
 
     return next();
   } catch (err) {
-    logger.warn('auth.require', 'JWT invalid', { message: err?.message });
+    // eslint-disable-next-line no-console
+    console.warn('[requireAuth] JWT error:', err.message);
     return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid token' });
   }
 }
