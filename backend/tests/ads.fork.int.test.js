@@ -39,7 +39,7 @@ describe('Ads fork workflow (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // B) add photo to draft
@@ -73,7 +73,7 @@ describe('Ads fork workflow (integration)', () => {
       request(app).post(`/api/ads/${newActiveId}/stop`),
       token
     ).expect(200);
-    expect(stoppedRes.body?.status).toBe('stopped');
+    expect(stoppedRes.body?.data?.status).toBe('stopped');
 
     // F) PATCH stopped -> fork (must create NEW DRAFT)
     const forkStoppedRes = await withAuth(
