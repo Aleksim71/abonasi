@@ -1,13 +1,6 @@
-# CHANGELOG (DEV)
+# Changelog (Development)
 
-Формат: YYYY-MM-DD — кратко, по делу
-
----
-
-## [Unreleased]
-
----
-
-## 2025-XX-XX
-- Initial backend structure created
-- Workflow and Codex rules defined
+## v1
+- D5 unified ERROR_CODES
+- D6 unified error handling
+- D7 API contract documented

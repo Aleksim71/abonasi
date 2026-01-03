@@ -1,13 +1,8 @@
-## PostgreSQL local setup
+# Development Environment
 
-- PostgreSQL cluster: 16/main
-- Port: 5433 (5432 may be occupied by Docker)
-- Auth: scram-sha-256
-- Passwordless access via ~/.pgpass
+Node.js 18+
+PostgreSQL 14+
 
-### Useful aliases
-
-- psqlabonasi
-- psqlabonasi_prod
-- psqlclusters
-- psqlports
+Required env:
+- DATABASE_URL
+- JWT_SECRET

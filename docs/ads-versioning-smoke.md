@@ -1,8 +1,9 @@
-[ ] draft -> PATCH -> updated (same id)
-[ ] draft -> publish -> active
-[ ] active -> PATCH -> new active + old stopped
-[ ] stopped -> PATCH -> new draft
-[ ] stopped -> restart -> active (NO fork)
-[ ] active -> restart -> 409
-[ ] feed shows only latest active
-[ ] public GET hides stopped/draft
+# Ads Versioning — Behavioral Contract
+
+This document describes guaranteed behavior of ads lifecycle and versions timeline.
+
+Source of truth: integration tests.
+
+draft → publish → active  
+active → stop → stopped  
+active/stopped → fork → new draft
