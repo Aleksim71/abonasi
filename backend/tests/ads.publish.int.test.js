@@ -37,7 +37,7 @@ describe('Ads publish rules (integration)', () => {
       })
       .expect(201);
 
-    const adId = createRes.body?.id;
+    const adId = createRes.body?.data?.id;
     expect(adId).toMatch(/[0-9a-f-]{36}/i);
 
     const pubRes = await withAuth(request(app).post(`/api/ads/${adId}/publish`), token).expect(409);
@@ -57,7 +57,7 @@ describe('Ads publish rules (integration)', () => {
       })
       .expect(201);
 
-    const adId = createRes.body?.id;
+    const adId = createRes.body?.data?.id;
     expect(adId).toMatch(/[0-9a-f-]{36}/i);
 
     await withAuth(
@@ -69,7 +69,7 @@ describe('Ads publish rules (integration)', () => {
 
     // first publish ok
     const first = await withAuth(request(app).post(`/api/ads/${adId}/publish`), token).expect(200);
-    expect(first.body?.status).toBe('active');
+    expect(first.body?.data?.status).toBe('active');
 
     // second publish forbidden
     const second = await withAuth(request(app).post(`/api/ads/${adId}/publish`), token).expect(409);
@@ -89,7 +89,7 @@ describe('Ads publish rules (integration)', () => {
       })
       .expect(201);
 
-    const adId = createRes.body?.id;
+    const adId = createRes.body?.data?.id;
     expect(adId).toMatch(/[0-9a-f-]{36}/i);
 
     await withAuth(
@@ -101,7 +101,7 @@ describe('Ads publish rules (integration)', () => {
 
     const pubRes = await withAuth(request(app).post(`/api/ads/${adId}/publish`), token).expect(200);
 
-    expect(pubRes.body?.status).toBe('active');
-    expect(pubRes.body?.published_at || pubRes.body?.publishedAt).toBeTruthy();
+    expect(pubRes.body?.data?.status).toBe('active');
+    expect(pubRes.body?.data?.publishedAt || pubRes.body?.publishedAt).toBeTruthy();
   });
 });

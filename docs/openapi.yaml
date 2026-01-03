@@ -53,22 +53,26 @@ components:
         email: { type: string, format: email }
         password: { type: string, minLength: 6 }
 
-    # TEMP: reflects current auth response shape ({ ok, user, token }).
-    # We'll change to { data } in PR1 and update this schema.
+    AuthUser:
+      type: object
+      required: [id, email, name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+
     AuthSuccess:
       type: object
-      required: [ok, user, token]
+      required: [data]
       properties:
-        ok: { type: boolean }
-        user:
+        data:
           type: object
-          required: [id, email, name, created_at]
+          required: [user, token]
           properties:
-            id: { type: string, format: uuid }
-            email: { type: string, format: email }
-            name: { type: string }
-            created_at: { type: string, format: date-time }
-        token: { type: string }
+            user:
+              $ref: "#/components/schemas/AuthUser"
+            token: { type: string }
 
     CreateAdRequest:
       type: object
@@ -119,8 +123,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/AuthRegisterRequest" }
       responses:
-        "200":
-          description: Success
+        "201":
+          description: Created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthSuccess" }
@@ -146,6 +150,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthSuccess" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           description: Unauthorized
           content:

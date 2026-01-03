@@ -46,7 +46,7 @@ describe('Ads versions timeline UX (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // 2) add photo
@@ -145,7 +145,7 @@ describe('Ads versions timeline UX (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // 2) add photo
@@ -218,7 +218,7 @@ describe('Ads versions timeline UX (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     await withAuth(request(app).get(`/api/ads/${draftId}/versions`), otherToken).expect(404);

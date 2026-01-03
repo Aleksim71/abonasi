@@ -25,6 +25,8 @@ function safeUser(row) {
 /**
  * POST /api/auth/register
  * body: { email, password, name }
+ *
+ * Success: { data: { user, token } }
  */
 async function register(req, res) {
   const scope = 'auth.register';
@@ -60,7 +62,12 @@ async function register(req, res) {
       const user = insert.rows[0];
       const token = signToken({ id: user.id, email: user.email, name: user.name });
 
-      return res.status(201).json({ ok: true, user: safeUser(user), token });
+      return res.status(201).json({
+        data: {
+          user: safeUser(user),
+          token
+        }
+      });
     } finally {
       client.release();
     }
@@ -72,6 +79,8 @@ async function register(req, res) {
 /**
  * POST /api/auth/login
  * body: { email, password }
+ *
+ * Success: { data: { user, token } }
  */
 async function login(req, res) {
   const scope = 'auth.login';
@@ -111,7 +120,12 @@ async function login(req, res) {
 
       const token = signToken({ id: user.id, email: user.email, name: user.name });
 
-      return res.status(200).json({ ok: true, user: safeUser(user), token });
+      return res.status(200).json({
+        data: {
+          user: safeUser(user),
+          token
+        }
+      });
     } finally {
       client.release();
     }
@@ -123,6 +137,8 @@ async function login(req, res) {
 /**
  * GET /api/auth/me
  * requires auth middleware (req.user)
+ *
+ * Success: { data: { user } }
  */
 async function me(req, res) {
   const scope = 'auth.me';
@@ -148,7 +164,11 @@ async function me(req, res) {
       throw new HttpError(401, ERROR_CODES.UNAUTHORIZED, 'unauthorized');
     }
 
-    return res.status(200).json({ ok: true, user: safeUser(user) });
+    return res.status(200).json({
+      data: {
+        user: safeUser(user)
+      }
+    });
   } catch (err) {
     return handleHttpError(res, err, { scope });
   }

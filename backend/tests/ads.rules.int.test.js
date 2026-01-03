@@ -47,7 +47,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // stop draft -> 409
@@ -69,7 +69,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // add photo
@@ -101,7 +101,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // add photo
@@ -158,7 +158,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const draftId = createRes.body?.id;
+    const draftId = createRes.body?.data?.id;
     expect(draftId).toMatch(/[0-9a-f-]{36}/i);
 
     // add photo
@@ -218,7 +218,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const id0 = create0.body?.id;
+    const id0 = create0.body?.data?.id;
     expect(id0).toMatch(/[0-9a-f-]{36}/i);
 
     await withAuth(
@@ -243,7 +243,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const idNull = createNull.body?.id;
+    const idNull = createNull.body?.data?.id;
     expect(idNull).toMatch(/[0-9a-f-]{36}/i);
 
     await withAuth(
@@ -270,7 +270,7 @@ describe('Ads business rules (integration)', () => {
       })
       .expect(201);
 
-    const adId = createRes.body?.id;
+    const adId = createRes.body?.data?.id;
     expect(adId).toMatch(/[0-9a-f-]{36}/i);
 
     // 2) add photo

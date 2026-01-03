@@ -44,6 +44,31 @@ function validatePriceCents(v) {
   return { ok: true, value: v };
 }
 
+function mapAdRowToDto(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    userId: r.user_id,
+    locationId: r.location_id,
+    title: r.title,
+    description: r.description,
+    priceCents: r.price_cents,
+    status: r.status,
+    createdAt: r.created_at,
+    publishedAt: r.published_at,
+    stoppedAt: r.stopped_at,
+    parentAdId: r.parent_ad_id,
+    replacedByAdId: r.replaced_by_ad_id
+  };
+}
+
+function mapAdRowWithLocationToDto(r) {
+  return {
+    ...mapAdRowToDto(r),
+    location: r.country || r.city || r.district ? { country: r.country, city: r.city, district: r.district } : undefined
+  };
+}
+
 /**
  * POST /api/ads
  * requires auth
@@ -88,7 +113,7 @@ async function createDraft(req, res) {
       priceCents
     });
 
-    return res.status(201).json(row);
+    return res.status(201).json({ data: mapAdRowToDto(row) });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.createDraft' });
   }
@@ -222,7 +247,7 @@ async function updateAd(req, res) {
 
       await client.query('COMMIT');
       return res.json({
-        data: r.row,
+        data: mapAdRowToDto(r.row),
         notice: { mode: 'updated', message: 'Draft ad updated' }
       });
     }
@@ -241,7 +266,7 @@ async function updateAd(req, res) {
         oldAdId: adId,
         newAdId: newAd.id,
         newStatus: newAd.status,
-        ad: newAd
+        ad: mapAdRowToDto(newAd)
       },
       notice: { mode: 'forked', message: noticeMessage }
     });
@@ -281,7 +306,7 @@ async function publishAd(req, res) {
 
   try {
     const row = await publishAdTx({ userId, adId });
-    return res.json(row);
+    return res.json({ data: mapAdRowToDto(row) });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.publishAd' });
   }
@@ -301,7 +326,7 @@ async function stopAd(req, res) {
 
   try {
     const row = await stopAdTx({ userId, adId });
-    return res.json(row);
+    return res.json({ data: mapAdRowToDto(row) });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.stopAd' });
   }
@@ -321,30 +346,7 @@ async function restartAd(req, res) {
 
   try {
     const row = await restartAdTx({ userId, adId });
-
-    // mapAdRowToDto might be declared later as const (not hoisted) -> use safe fallback
-    // eslint-disable-next-line no-undef
-    const mapper =
-      // eslint-disable-next-line no-undef
-      typeof mapAdRowToDto !== 'undefined'
-        ? // eslint-disable-next-line no-undef
-          mapAdRowToDto
-        : (r) => ({
-            id: r.id,
-            userId: r.user_id,
-            locationId: r.location_id,
-            title: r.title,
-            description: r.description,
-            priceCents: r.price_cents,
-            status: r.status,
-            createdAt: r.created_at,
-            publishedAt: r.published_at,
-            stoppedAt: r.stopped_at,
-            parentAdId: r.parent_ad_id,
-            replacedByAdId: r.replaced_by_ad_id
-          });
-
-    return res.status(200).json({ data: { ad: mapper(row) } });
+    return res.status(200).json({ data: { ad: mapAdRowToDto(row) } });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.restartAd' });
   }
@@ -392,14 +394,21 @@ async function listMyAds(req, res) {
 
   try {
     const r = await pool.query(sql, values);
-    return res.json(r.rows);
+    const rows = r.rows.map((row) => {
+      const dto = mapAdRowToDto(row);
+      return {
+        ...dto,
+        location: { country: row.country, city: row.city, district: row.district }
+      };
+    });
+    return res.json({ data: rows });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.listMyAds' });
   }
 }
 
 /**
- * GET /api/ads (feed)
+ * GET /api/ads/feed
  * query: locationId=<uuid> (required for MVP feed)
  * returns: previewPhoto + photosCount
  */
@@ -418,6 +427,7 @@ async function listFeed(req, res) {
       `
       SELECT
         a.id,
+        a.user_id,
         a.location_id,
         l.country, l.city, l.district,
         a.title, a.description, a.price_cents,
@@ -464,13 +474,17 @@ async function listFeed(req, res) {
           }
         : null;
 
-      // eslint-disable-next-line no-unused-vars
-      const { previewPhotoId, previewPhotoFilePath, previewPhotoSortOrder, ...rest } = row;
+      const dto = mapAdRowToDto(row);
 
-      return { ...rest, previewPhoto };
+      return {
+        ...dto,
+        location: { country: row.country, city: row.city, district: row.district },
+        previewPhoto,
+        photosCount: row.photosCount
+      };
     });
 
-    return res.json(rows);
+    return res.json({ data: rows });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'ads.listFeed' });
   }
@@ -531,9 +545,12 @@ async function getAdById(req, res) {
       [adId]
     );
 
+    const dto = mapAdRowToDto(ad);
+
     return res.json({
       data: {
-        ...ad,
+        ...dto,
+        location: { country: ad.country, city: ad.city, district: ad.district },
         isOwner: Boolean(isOwner),
         photos: photosRes.rows
       }
