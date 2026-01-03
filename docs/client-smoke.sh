@@ -1,89 +1,198 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:3001}"
+# ------------------------------------------------------------
+# Abonasi Client Smoke (D9)
+# - register -> login -> create draft -> add photo -> publish
+# - view public card -> versions timeline
+#
+# Requires:
+# - backend running locally (default http://localhost:3001)
+# - jq installed
+#
+# Usage:
+#   bash docs/client-smoke.sh
+#   API_BASE=http://localhost:3001 bash docs/client-smoke.sh
+# ------------------------------------------------------------
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1"; exit 1; }; }
+API_BASE="${API_BASE:-http://localhost:3001}"
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "[smoke] missing dependency: $1"
+    exit 1
+  }
+}
+
 need curl
 need jq
 
-echo "== Abonasi client smoke =="
-echo "BASE_URL=$BASE_URL"
-echo
+STAMP="$(date +%s)"
+EMAIL="smoke_${STAMP}@example.com"
+PASSWORD="password123"
+NAME="Smoke User ${STAMP}"
 
-stamp="$(date +%s)"
-EMAIL="smoke_${stamp}@example.com"
-PASS="password123"
-NAME="Smoke User"
+echo "[smoke] API_BASE=${API_BASE}"
+echo "[smoke] EMAIL=${EMAIL}"
 
-json() { jq -c .; }
+json() { jq -c '.'; }
 
-req() {
-  local method="$1"; shift
-  local url="$1"; shift
-  curl -sS -X "$method" "$BASE_URL$url" -H "Content-Type: application/json" "$@"
+post_json() {
+  local url="$1"
+  local token="${2:-}"
+  local body="${3:-{}}"
+
+  if [[ -n "${token}" ]]; then
+    curl -sS -X POST "${API_BASE}${url}" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${token}" \
+      -d "${body}"
+  else
+    curl -sS -X POST "${API_BASE}${url}" \
+      -H "Content-Type: application/json" \
+      -d "${body}"
+  fi
 }
 
-echo "1) register"
-REG_RES="$(req POST /api/auth/register -d "$(jq -n --arg e "$EMAIL" --arg p "$PASS" --arg n "$NAME" '{email:$e,password:$p,name:$n}')" )"
-echo "$REG_RES" | json
-echo
+patch_json() {
+  local url="$1"
+  local token="$2"
+  local body="${3:-{}}"
 
-echo "2) login"
-LOGIN_RES="$(req POST /api/auth/login -d "$(jq -n --arg e "$EMAIL" --arg p "$PASS" '{email:$e,password:$p}')" )"
-echo "$LOGIN_RES" | json
-TOKEN="$(echo "$LOGIN_RES" | jq -r '.token // empty')"
-if [[ -z "${TOKEN}" || "${TOKEN}" == "null" ]]; then
-  echo "ERROR: token not found in login response"
+  curl -sS -X PATCH "${API_BASE}${url}" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${token}" \
+    -d "${body}"
+}
+
+get_json() {
+  local url="$1"
+  local token="${2:-}"
+
+  if [[ -n "${token}" ]]; then
+    curl -sS "${API_BASE}${url}" -H "Authorization: Bearer ${token}"
+  else
+    curl -sS "${API_BASE}${url}"
+  fi
+}
+
+# ----------------------------
+# 1) register
+# ----------------------------
+echo
+echo "[1] register"
+REG="$(post_json "/api/auth/register" "" "$(jq -n \
+  --arg email "$EMAIL" \
+  --arg password "$PASSWORD" \
+  --arg name "$NAME" \
+  '{email:$email, password:$password, name:$name}' \
+)")"
+
+echo "$REG" | jq '.'
+
+# ----------------------------
+# 2) login -> token
+# ----------------------------
+echo
+echo "[2] login"
+LOGIN="$(post_json "/api/auth/login" "" "$(jq -n \
+  --arg email "$EMAIL" \
+  --arg password "$PASSWORD" \
+  '{email:$email, password:$password}' \
+)")"
+
+echo "$LOGIN" | jq '.'
+
+TOKEN="$(echo "$LOGIN" | jq -r '.data.token // empty')"
+if [[ -z "${TOKEN}" ]]; then
+  echo "[smoke] ERROR: token not found in login response"
   exit 1
 fi
-AUTH=(-H "Authorization: Bearer $TOKEN")
-echo
+echo "[smoke] token ok"
 
-echo "3) me"
-ME_RES="$(req GET /api/auth/me "${AUTH[@]}")"
-echo "$ME_RES" | json
+# ----------------------------
+# 3) create draft
+# ----------------------------
+# NOTE: locationId depends on your DB seed.
+# We try to take first location from GET /api/locations (public).
 echo
-
-echo "4) list locations (take first id)"
-LOC_RES="$(req GET /api/locations)"
-LOCATION_ID="$(echo "$LOC_RES" | jq -r '.[0].id // empty')"
-if [[ -z "${LOCATION_ID}" || "${LOCATION_ID}" == "null" ]]; then
-  echo "ERROR: no locations found. Ensure locations are seeded."
+echo "[3] resolve locationId"
+LOCATIONS="$(get_json "/api/locations")"
+LOCATION_ID="$(echo "$LOCATIONS" | jq -r '.data[0].id // .[0].id // empty')"
+if [[ -z "${LOCATION_ID}" ]]; then
+  echo "[smoke] ERROR: cannot resolve locationId from /api/locations"
+  echo "$LOCATIONS" | jq '.'
   exit 1
 fi
-echo "locationId=$LOCATION_ID"
-echo
+echo "[smoke] locationId=${LOCATION_ID}"
 
-echo "5) create draft ad"
-CREATE_RES="$(req POST /api/ads "${AUTH[@]}" -d "$(jq -n --arg loc "$LOCATION_ID" '{locationId:$loc,title:"Smoke ad",description:"Smoke desc",priceCents:0}')" )"
-echo "$CREATE_RES" | json
-AD_ID="$(echo "$CREATE_RES" | jq -r '.id // .data.id // empty')"
-if [[ -z "${AD_ID}" || "${AD_ID}" == "null" ]]; then
-  # fallback: maybe response is full ad object
-  AD_ID="$(echo "$CREATE_RES" | jq -r '.id // empty')"
-fi
-if [[ -z "${AD_ID}" || "${AD_ID}" == "null" ]]; then
-  echo "ERROR: cannot extract ad id from create response"
+echo
+echo "[4] create draft ad"
+DRAFT="$(post_json "/api/ads" "$TOKEN" "$(jq -n \
+  --arg locationId "$LOCATION_ID" \
+  '{locationId:$locationId, title:"Smoke Ad", description:"Smoke desc", priceCents: 1234}' \
+)")"
+
+echo "$DRAFT" | jq '.'
+AD_ID="$(echo "$DRAFT" | jq -r '.data.id // empty')"
+if [[ -z "${AD_ID}" ]]; then
+  echo "[smoke] ERROR: ad id not found"
   exit 1
 fi
-echo "adId=$AD_ID"
-echo
+echo "[smoke] adId=${AD_ID}"
 
-echo "6) publish without photos (expect 409)"
-set +e
-PUB_NO_PHOTO_HTTP="$(curl -sS -o /tmp/pub_no_photo.json -w "%{http_code}" -X POST "$BASE_URL/api/ads/$AD_ID/publish" "${AUTH[@]}" -H "Content-Type: application/json")"
-set -e
-cat /tmp/pub_no_photo.json | json
-echo "HTTP=$PUB_NO_PHOTO_HTTP"
-if [[ "$PUB_NO_PHOTO_HTTP" != "409" ]]; then
-  echo "ERROR: expected 409 for publish without photos"
+# ----------------------------
+# 4) add photo to draft
+# ----------------------------
+# Based on current backend design: photos are stored in DB as file_path.
+# This endpoint does NOT upload a binary, it attaches a "filePath".
+# If you later switch to real uploads, adjust this step accordingly.
+echo
+echo "[5] add photo to draft"
+ADD_PHOTO="$(post_json "/api/ads/${AD_ID}/photos" "$TOKEN" "$(jq -n \
+  --arg filePath "uploads/smoke_${STAMP}.jpg" \
+  '{filePath:$filePath}' \
+)")"
+
+echo "$ADD_PHOTO" | jq '.'
+
+PHOTOS_COUNT="$(echo "$ADD_PHOTO" | jq -r '.data.photos | length // 0')"
+if [[ "${PHOTOS_COUNT}" == "0" ]]; then
+  echo "[smoke] ERROR: photo not attached (photos length is 0)"
   exit 1
 fi
-echo
+echo "[smoke] photos attached: ${PHOTOS_COUNT}"
 
-echo "NOTE: Photo upload endpoint differs by project setup."
-echo "If you have /api/ads/:id/photos, implement it here and re-run."
-echo "For now, smoke stops here after verifying core contract path."
+# ----------------------------
+# 5) publish
+# ----------------------------
 echo
-echo "OK ✅"
+echo "[6] publish"
+PUBLISH="$(post_json "/api/ads/${AD_ID}/publish" "$TOKEN" "{}")"
+echo "$PUBLISH" | jq '.'
+
+STATUS="$(echo "$PUBLISH" | jq -r '.data.status // empty')"
+if [[ "${STATUS}" != "active" ]]; then
+  echo "[smoke] ERROR: expected published status=active, got: ${STATUS}"
+  exit 1
+fi
+echo "[smoke] published ok"
+
+# ----------------------------
+# 6) public card (optionalAuth)
+# ----------------------------
+echo
+echo "[7] get public card (no auth)"
+CARD="$(get_json "/api/ads/${AD_ID}")"
+echo "$CARD" | jq '.'
+
+# ----------------------------
+# 7) versions (optionalAuth)
+# ----------------------------
+echo
+echo "[8] versions timeline (no auth)"
+VERS="$(get_json "/api/ads/${AD_ID}/versions")"
+echo "$VERS" | jq '.'
+
+echo
+echo "[smoke] ✅ done"
