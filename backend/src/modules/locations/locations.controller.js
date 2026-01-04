@@ -1,4 +1,3 @@
-
 'use strict';
 
 const { pool } = require('../../config/db');
@@ -40,7 +39,7 @@ async function listLocations(req, res) {
 
   try {
     const result = await pool.query(sql, values);
-    return res.json(result.rows);
+    return res.json({ data: result.rows });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'locations.listLocations' });
   }
@@ -52,8 +51,10 @@ async function listLocations(req, res) {
  */
 async function listCountries(req, res) {
   try {
-    const r = await pool.query(`SELECT DISTINCT country FROM locations ORDER BY country ASC`);
-    return res.json(r.rows.map((x) => x.country));
+    const r = await pool.query(
+      `SELECT DISTINCT country FROM locations ORDER BY country ASC`
+    );
+    return res.json({ data: r.rows.map(x => x.country) });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'locations.listCountries' });
   }
@@ -66,7 +67,10 @@ async function listCountries(req, res) {
 async function listCities(req, res) {
   const { country } = req.query;
   if (!country) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'country is required' });
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'country is required'
+    });
   }
 
   try {
@@ -74,7 +78,7 @@ async function listCities(req, res) {
       `SELECT DISTINCT city FROM locations WHERE country = $1 ORDER BY city ASC`,
       [country]
     );
-    return res.json(r.rows.map((x) => x.city));
+    return res.json({ data: r.rows.map(x => x.city) });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'locations.listCities' });
   }
@@ -87,7 +91,10 @@ async function listCities(req, res) {
 async function listDistricts(req, res) {
   const { country, city } = req.query;
   if (!country || !city) {
-    return res.status(400).json({ error: 'BAD_REQUEST', message: 'country and city are required' });
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'country and city are required'
+    });
   }
 
   try {
@@ -100,7 +107,7 @@ async function listDistricts(req, res) {
       `,
       [country, city]
     );
-    return res.json(r.rows);
+    return res.json({ data: r.rows });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'locations.listDistricts' });
   }
@@ -109,9 +116,6 @@ async function listDistricts(req, res) {
 /**
  * GET /api/locations/resolve?country=Germany&city=Munich&district=Laim
  * Returns: { id, country, city, district } or 404
- *
- * Notes:
- * - district match is exact (case-sensitive). Frontend should use values from /districts.
  */
 async function resolveLocation(req, res) {
   const { country, city, district } = req.query;
@@ -134,10 +138,13 @@ async function resolveLocation(req, res) {
     );
 
     if (r.rowCount === 0) {
-      return res.status(404).json({ error: 'NOT_FOUND', message: 'location not found' });
+      return res.status(404).json({
+        error: 'NOT_FOUND',
+        message: 'location not found'
+      });
     }
 
-    return res.json(r.rows[0]);
+    return res.json({ data: r.rows[0] });
   } catch (err) {
     return handleHttpError(res, err, { scope: 'locations.resolveLocation' });
   }
