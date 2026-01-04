@@ -1,28 +1,37 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import * as AdsApi from '../api/ads.api';
 import { ApiError } from '../api/http';
 import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 
+/**
+ * IMPORTANT:
+ * Backend expects JSON { filePath } for adding photos (not multipart upload).
+ * This page is a minimal UX for MVP: paste a filePath and add it.
+ */
 export function DraftPhotosPage() {
   const { id } = useParams();
-  const nav = useNavigate();
+  const adId = String(id || '').trim();
 
-  const [ad, setAd] = useState<AdsApi.AdDetails | null>(null);
+  const [photos, setPhotos] = useState<AdsApi.AdPhoto[]>([]);
+  const [filePath, setFilePath] = useState('');
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const photos = useMemo(() => (ad?.photos ?? []).slice().sort((a, b) => a.order - b.order), [ad]);
+  const sorted = useMemo(
+    () => photos.slice().sort((a, b) => a.sortOrder - b.sortOrder),
+    [photos]
+  );
 
   async function refresh() {
-    if (!id) return;
+    if (!adId) return;
     setError(null);
     setLoading(true);
     try {
-      const data = await AdsApi.getById(id);
-      setAd(data);
+      const ad = await AdsApi.getById(adId);
+      setPhotos(Array.isArray(ad.photos) ? ad.photos : []);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
@@ -34,136 +43,106 @@ export function DraftPhotosPage() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [adId]);
 
-  if (!id) return <ErrorBox message="Missing id param" />;
+  async function addByPath() {
+    const fp = filePath.trim();
+    if (fp.length < 3) {
+      setError('BAD_REQUEST: filePath must be 3..500 chars');
+      return;
+    }
 
-  async function onAdd(file: File) {
     setError(null);
-    setBusy(true);
+    setMutating(true);
     try {
-      const data = await AdsApi.addPhoto(id, file);
-      setAd(data);
+      const res = await AdsApi.addPhotoByPath(adId, fp);
+      setPhotos(res.photos || []);
+      setFilePath('');
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
     } finally {
-      setBusy(false);
+      setMutating(false);
     }
   }
 
-  async function onDelete(photoId: string) {
+  async function remove(photoId: string) {
     setError(null);
-    setBusy(true);
+    setMutating(true);
     try {
-      const data = await AdsApi.deletePhoto(id, photoId);
-      setAd(data);
+      const res = await AdsApi.deletePhoto(adId, photoId);
+      setPhotos(res.photos || []);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
     } finally {
-      setBusy(false);
+      setMutating(false);
     }
   }
 
-  async function onMove(photoId: string, dir: -1 | 1) {
-    const idx = photos.findIndex((p) => p.id === photoId);
-    const nextIdx = idx + dir;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= photos.length) return;
-
-    const reordered = photos.map((p) => p.id);
-    const tmp = reordered[idx];
-    reordered[idx] = reordered[nextIdx];
-    reordered[nextIdx] = tmp;
-
-    setError(null);
-    setBusy(true);
-    try {
-      const data = await AdsApi.reorderPhotos(id, reordered);
-      setAd(data);
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onPublish() {
-    setError(null);
-    setBusy(true);
-    try {
-      const data = await AdsApi.publish(id);
-      setAd(data);
-      nav(`/ads/${data.id}`, { replace: true });
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
-  }
+  if (!adId) return <ErrorBox message="Missing id param" />;
 
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>Draft photos</h2>
-        <Link to="/my-ads">Back to my ads</Link>
+        <h2 style={{ margin: 0 }}>Draft Photos</h2>
+        <Link to={`/ads/${adId}`}>Back to Ad</Link>
       </div>
+
+      <div className="small muted">adId: {adId}</div>
 
       {error && <ErrorBox message={error} />}
       {loading && <Loading />}
 
-      {!loading && ad && (
+      {!loading && (
         <>
-          <div className="small muted">adId: {ad.id} | status: {ad.status}</div>
+          <div style={{ marginTop: 12 }}>
+            <label className="small muted">filePath (paste absolute path)</label>
+            <div className="row" style={{ gap: 8, marginTop: 6 }}>
+              <input
+                className="input"
+                style={{ flex: 1 }}
+                placeholder="/home/.../picture.jpg"
+                value={filePath}
+                onChange={(e) => setFilePath(e.target.value)}
+                disabled={mutating}
+              />
+              <button className="btn" onClick={addByPath} disabled={mutating || filePath.trim().length < 3}>
+                Add
+              </button>
+            </div>
+            <div className="small muted" style={{ marginTop: 6 }}>
+              Backend rule: publish requires at least 1 photo.
+            </div>
+          </div>
 
-          <div style={{ marginTop: 12 }} className="row">
-            <input
-              className="input"
-              type="file"
-              accept="image/*"
-              disabled={busy}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onAdd(f);
-                e.currentTarget.value = '';
-              }}
-            />
-            <button className="btn" onClick={refresh} disabled={busy}>
+          <hr />
+
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong>Photos</strong>
+            <button className="btn" onClick={refresh} disabled={mutating}>
               Refresh
             </button>
-            <button className="btn" onClick={onPublish} disabled={busy || ad.status !== 'draft'}>
-              Publish
-            </button>
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            {photos.length === 0 ? (
-              <p className="muted">No photos yet.</p>
-            ) : (
-              <ul>
-                {photos.map((p) => (
-                  <li key={p.id} className="row" style={{ justifyContent: 'space-between' }}>
-                    <span>
-                      <span className="small muted">#{p.order}</span> {p.url}
-                    </span>
-                    <span className="row">
-                      <button className="btn" disabled={busy} onClick={() => onMove(p.id, -1)}>
-                        ↑
-                      </button>
-                      <button className="btn" disabled={busy} onClick={() => onMove(p.id, 1)}>
-                        ↓
-                      </button>
-                      <button className="btn danger" disabled={busy} onClick={() => onDelete(p.id)}>
-                        Delete
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          {sorted.length === 0 && <p className="muted">No photos yet.</p>}
+
+          {sorted.length > 0 && (
+            <div className="grid" style={{ marginTop: 10 }}>
+              {sorted.map((p) => (
+                <div className="card" key={p.id}>
+                  <div className="small muted">#{p.sortOrder}</div>
+                  <div style={{ wordBreak: 'break-word' }}>{p.filePath}</div>
+                  <div className="small muted">id: {p.id}</div>
+                  <div style={{ marginTop: 10 }}>
+                    <button className="btn" onClick={() => remove(p.id)} disabled={mutating}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

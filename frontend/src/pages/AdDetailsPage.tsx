@@ -7,7 +7,7 @@ import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 
 export function AdDetailsPage() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
 
   const [ad, setAd] = useState<AdsApi.AdDetails | null>(null);
@@ -17,8 +17,7 @@ export function AdDetailsPage() {
 
   const isOwner = useMemo(() => {
     if (!ad || !user) return false;
-    // backend may return ownerId; if not, just hide owner actions
-    return ad.ownerId ? ad.ownerId === user.id : false;
+    return ad.userId === user.id;
   }, [ad, user]);
 
   async function refresh() {
@@ -29,7 +28,10 @@ export function AdDetailsPage() {
       const data = await AdsApi.getById(id);
       setAd(data);
     } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
+      const msg =
+        err instanceof ApiError
+          ? `${err.errorCode}: ${err.message}`
+          : 'Unknown error';
       setError(msg);
     } finally {
       setLoading(false);
@@ -48,14 +50,19 @@ export function AdDetailsPage() {
       const data = await fn();
       setAd(data);
     } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
+      const msg =
+        err instanceof ApiError
+          ? `${err.errorCode}: ${err.message}`
+          : 'Unknown error';
       setError(msg);
     } finally {
       setMutating(false);
     }
   }
 
-  if (!id) return <ErrorBox message="Missing id param" />;
+  if (!id) {
+    return <ErrorBox message="Missing ad id" />;
+  }
 
   return (
     <div className="card">
@@ -73,19 +80,24 @@ export function AdDetailsPage() {
             <strong>{ad.title}</strong>
             <span className="small muted">{ad.status}</span>
           </div>
+
           <div className="small muted">id: {ad.id}</div>
-          <p className="muted">{ad.description ?? ''}</p>
+
+          {ad.description && <p className="muted">{ad.description}</p>}
 
           {Array.isArray(ad.photos) && ad.photos.length > 0 && (
-            <div>
+            <div style={{ marginTop: 8 }}>
               <div className="small muted">Photos:</div>
               <ul>
                 {ad.photos
                   .slice()
-                  .sort((a, b) => a.order - b.order)
+                  .sort((a, b) => a.sortOrder - b.sortOrder)
                   .map((p) => (
                     <li key={p.id}>
-                      <span className="small muted">#{p.order}</span> {p.url}
+                      <span className="small muted">
+                        #{p.sortOrder}
+                      </span>{' '}
+                      {p.filePath}
                     </li>
                   ))}
               </ul>
@@ -99,10 +111,14 @@ export function AdDetailsPage() {
               Refresh
             </button>
 
-            {isOwner && (
+            {isOwner ? (
               <>
                 {ad.status === 'draft' && (
-                  <Link to={`/draft/${ad.id}/photos`} className="btn" style={{ textDecoration: 'none' }}>
+                  <Link
+                    to={`/draft/${ad.id}/photos`}
+                    className="btn"
+                    style={{ textDecoration: 'none' }}
+                  >
                     Photos
                   </Link>
                 )}
@@ -114,6 +130,7 @@ export function AdDetailsPage() {
                 >
                   Publish
                 </button>
+
                 <button
                   className="btn"
                   disabled={mutating || ad.status !== 'active'}
@@ -121,6 +138,7 @@ export function AdDetailsPage() {
                 >
                   Stop
                 </button>
+
                 <button
                   className="btn"
                   disabled={mutating || ad.status !== 'stopped'}
@@ -129,9 +147,9 @@ export function AdDetailsPage() {
                   Restart
                 </button>
               </>
+            ) : (
+              <span className="small muted">Owner actions hidden.</span>
             )}
-
-            {!isOwner && <span className="small muted">Owner actions hidden.</span>}
           </div>
         </>
       )}
