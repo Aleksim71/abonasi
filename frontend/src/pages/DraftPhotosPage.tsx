@@ -14,14 +14,23 @@ export function DraftPhotosPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const photos = useMemo(() => (ad?.photos ?? []).slice().sort((a, b) => a.order - b.order), [ad]);
+  // ✅ Hooks must NOT be conditional. So we keep hooks above any early return.
+  const adId = id ?? '';
+
+  const photos = useMemo(() => {
+    const list = ad?.photos ?? [];
+    return list.slice().sort((a, b) => a.order - b.order);
+  }, [ad]);
+
+  const canPublish = Boolean(ad && ad.status === 'draft' && photos.length >= 1 && !busy);
 
   async function refresh() {
-    if (!id) return;
+    if (!adId) return;
+
     setError(null);
     setLoading(true);
     try {
-      const data = await AdsApi.getById(id);
+      const data = await AdsApi.getById(adId);
       setAd(data);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
@@ -34,15 +43,15 @@ export function DraftPhotosPage() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  if (!id) return <ErrorBox message="Missing id param" />;
+  }, [adId]);
 
   async function onAdd(file: File) {
+    if (!adId) return;
+
     setError(null);
     setBusy(true);
     try {
-      const data = await AdsApi.addPhoto(id, file);
+      const data = await AdsApi.addPhoto(adId, file);
       setAd(data);
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
@@ -53,12 +62,22 @@ export function DraftPhotosPage() {
   }
 
   async function onDelete(photoId: string) {
+    if (!adId || !ad) return;
+
+    const prev = ad;
+    const nextPhotos = (prev.photos ?? []).filter((p) => p.id !== photoId);
+
+    // optimistic UI
+    setAd({ ...prev, photos: nextPhotos });
     setError(null);
     setBusy(true);
+
     try {
-      const data = await AdsApi.deletePhoto(id, photoId);
+      const data = await AdsApi.deletePhoto(adId, photoId);
       setAd(data);
     } catch (err) {
+      // rollback
+      setAd(prev);
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
     } finally {
@@ -67,21 +86,40 @@ export function DraftPhotosPage() {
   }
 
   async function onMove(photoId: string, dir: -1 | 1) {
-    const idx = photos.findIndex((p) => p.id === photoId);
+    if (!adId || !ad) return;
+
+    const sorted = photos;
+    const idx = sorted.findIndex((p) => p.id === photoId);
     const nextIdx = idx + dir;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= photos.length) return;
+    if (idx < 0 || nextIdx < 0 || nextIdx >= sorted.length) return;
 
-    const reordered = photos.map((p) => p.id);
-    const tmp = reordered[idx];
-    reordered[idx] = reordered[nextIdx];
-    reordered[nextIdx] = tmp;
+    const prev = ad;
 
+    // build new order list (ids)
+    const ids = sorted.map((p) => p.id);
+    const tmp = ids[idx];
+    ids[idx] = ids[nextIdx];
+    ids[nextIdx] = tmp;
+
+    // optimistic: rebuild photos with new .order for UI
+    const byId = new Map((prev.photos ?? []).map((p) => [p.id, p] as const));
+    const optimisticPhotos = ids
+      .map((pid, i) => {
+        const p = byId.get(pid);
+        return p ? { ...p, order: i + 1 } : null;
+      })
+      .filter(Boolean) as NonNullable<AdsApi.AdDetails['photos']>;
+
+    setAd({ ...prev, photos: optimisticPhotos });
     setError(null);
     setBusy(true);
+
     try {
-      const data = await AdsApi.reorderPhotos(id, reordered);
+      const data = await AdsApi.reorderPhotos(adId, ids);
       setAd(data);
     } catch (err) {
+      // rollback
+      setAd(prev);
       const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
     } finally {
@@ -90,10 +128,12 @@ export function DraftPhotosPage() {
   }
 
   async function onPublish() {
+    if (!adId || !ad) return;
+
     setError(null);
     setBusy(true);
     try {
-      const data = await AdsApi.publish(id);
+      const data = await AdsApi.publish(adId);
       setAd(data);
       nav(`/ads/${data.id}`, { replace: true });
     } catch (err) {
@@ -103,6 +143,8 @@ export function DraftPhotosPage() {
       setBusy(false);
     }
   }
+
+  if (!id) return <ErrorBox message="Missing id param" />;
 
   return (
     <div className="card">
@@ -116,7 +158,9 @@ export function DraftPhotosPage() {
 
       {!loading && ad && (
         <>
-          <div className="small muted">adId: {ad.id} | status: {ad.status}</div>
+          <div className="small muted">
+            adId: {ad.id} | status: {ad.status} | photos: {photos.length}
+          </div>
 
           <div style={{ marginTop: 12 }} className="row">
             <input
@@ -133,34 +177,77 @@ export function DraftPhotosPage() {
             <button className="btn" onClick={refresh} disabled={busy}>
               Refresh
             </button>
-            <button className="btn" onClick={onPublish} disabled={busy || ad.status !== 'draft'}>
+
+            <button className="btn" onClick={onPublish} disabled={!canPublish}>
               Publish
             </button>
           </div>
+
+          {ad.status === 'draft' && photos.length === 0 && (
+            <div className="small muted" style={{ marginTop: 8 }}>
+              Add at least 1 photo to publish.
+            </div>
+          )}
 
           <div style={{ marginTop: 12 }}>
             {photos.length === 0 ? (
               <p className="muted">No photos yet.</p>
             ) : (
-              <ul>
-                {photos.map((p) => (
-                  <li key={p.id} className="row" style={{ justifyContent: 'space-between' }}>
-                    <span>
-                      <span className="small muted">#{p.order}</span> {p.url}
-                    </span>
-                    <span className="row">
-                      <button className="btn" disabled={busy} onClick={() => onMove(p.id, -1)}>
-                        ↑
-                      </button>
-                      <button className="btn" disabled={busy} onClick={() => onMove(p.id, 1)}>
-                        ↓
-                      </button>
-                      <button className="btn danger" disabled={busy} onClick={() => onDelete(p.id)}>
-                        Delete
-                      </button>
-                    </span>
-                  </li>
-                ))}
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
+                {photos.map((p, index) => {
+                  const isFirst = index === 0;
+                  const isLast = index === photos.length - 1;
+
+                  return (
+                    <li
+                      key={p.id}
+                      className="row"
+                      style={{
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        borderRadius: 10,
+                        padding: 10
+                      }}
+                    >
+                      <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+                        <div className="small muted" style={{ width: 44 }}>
+                          #{p.order}
+                        </div>
+
+                        <img
+                          src={p.url}
+                          alt={`photo-${p.order}`}
+                          style={{
+                            width: 86,
+                            height: 86,
+                            objectFit: 'cover',
+                            borderRadius: 10,
+                            border: '1px solid rgba(0,0,0,0.08)'
+                          }}
+                        />
+
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <div className="small muted" style={{ maxWidth: 520, wordBreak: 'break-all' }}>
+                            {p.url}
+                          </div>
+                        </div>
+                      </div>
+
+                      <span className="row" style={{ gap: 8 }}>
+                        <button className="btn" disabled={busy || isFirst} onClick={() => onMove(p.id, -1)}>
+                          ↑
+                        </button>
+                        <button className="btn" disabled={busy || isLast} onClick={() => onMove(p.id, 1)}>
+                          ↓
+                        </button>
+                        <button className="btn danger" disabled={busy} onClick={() => onDelete(p.id)}>
+                          Delete
+                        </button>
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
