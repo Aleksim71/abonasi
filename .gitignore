@@ -32,3 +32,6 @@ temp/
 backend/.env
 backend/.env.test
 backend/.env.local
+
+# vite cache
+frontend/.vite/

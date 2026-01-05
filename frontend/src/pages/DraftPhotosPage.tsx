@@ -1,258 +1,329 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import * as AdsApi from '../api/ads.api';
-import { ApiError } from '../api/http';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+
+import { apiFetch, ApiError } from '../api/http';
+import { useAuth } from '../store/auth.store';
 import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 
-export function DraftPhotosPage() {
-  const { id } = useParams();
-  const nav = useNavigate();
+import {
+  deleteAdPhoto,
+  getPreviewFilePath,
+  reorderAdPhotos,
+  sortPhotosByOrder,
+  uploadAdPhotos,
+  type Photo,
+} from '../api/photos.api';
 
-  const [ad, setAd] = useState<AdsApi.AdDetails | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+type AdDetails = {
+  id: string;
+  status: string;
+  userId?: string | null;
+  photos?: Photo[];
+};
 
-  // ✅ Hooks must NOT be conditional. So we keep hooks above any early return.
-  const adId = id ?? '';
+function isDraft(status: string | undefined | null): boolean {
+  return String(status || '').toLowerCase() === 'draft';
+}
 
-  const photos = useMemo(() => {
-    const list = ad?.photos ?? [];
-    return list.slice().sort((a, b) => a.order - b.order);
-  }, [ad]);
+function hasMessage(x: unknown): x is { message: unknown } {
+  return typeof x === 'object' && x !== null && 'message' in x;
+}
 
-  const canPublish = Boolean(ad && ad.status === 'draft' && photos.length >= 1 && !busy);
+function toMessage(e: unknown): string {
+  if (e instanceof ApiError) return e.message;
 
-  async function refresh() {
-    if (!adId) return;
-
-    setError(null);
-    setLoading(true);
-    try {
-      const data = await AdsApi.getById(adId);
-      setAd(data);
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
+  if (hasMessage(e) && typeof e.message === 'string' && e.message.trim()) {
+    return e.message;
   }
 
+  return 'Something went wrong';
+}
+
+function toErrorHint(e: unknown): string | null {
+  if (e instanceof ApiError) {
+    if (e.status === 401) return 'Please sign in again.';
+    if (e.status === 403) return 'You have no permissions to edit these photos.';
+    if (e.status === 409) return 'Action not allowed in current status (draft-only).';
+    if (e.status === 422) return 'Invalid data. Please check selected files.';
+  }
+  return null;
+}
+
+export function DraftPhotosPage() {
+  const { id: adIdParam } = useParams();
+  const adId = String(adIdParam || '').trim();
+  const { user } = useAuth();
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [ad, setAd] = useState<AdDetails | null>(null);
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [uploading, setUploading] = useState(false);
+  const [mutating, setMutating] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+
+  const isOwner = useMemo(() => {
+    if (!user || !ad) return false;
+    if (!ad.userId) return false;
+    return String(ad.userId) === String(user.id);
+  }, [user, ad]);
+
+  const canEdit = useMemo(() => {
+    return Boolean(isOwner && isDraft(ad?.status));
+  }, [isOwner, ad?.status]);
+
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      setHint(null);
+
+      try {
+        const data = await apiFetch<AdDetails>(`/api/ads/${encodeURIComponent(adId)}`, { method: 'GET' });
+        if (cancelled) return;
+
+        setAd(data);
+        setPhotos(sortPhotosByOrder((data?.photos || []) as Photo[]));
+      } catch (e) {
+        if (cancelled) return;
+        setError(toMessage(e));
+        setHint(toErrorHint(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    if (!adId) {
+      setLoading(false);
+      setAd(null);
+      setPhotos([]);
+      setError('Ad id is missing');
+      return;
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [adId]);
 
-  async function onAdd(file: File) {
-    if (!adId) return;
+  async function onPickFiles(ev: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(ev.target.files || []);
+    ev.target.value = '';
+
+    if (!files.length) return;
 
     setError(null);
-    setBusy(true);
+    setHint(null);
+    setUploading(true);
+
     try {
-      const data = await AdsApi.addPhoto(adId, file);
-      setAd(data);
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
+      const res = await uploadAdPhotos({ adId, files });
+      setPhotos(sortPhotosByOrder(res.photos));
+    } catch (e) {
+      setError(toMessage(e));
+      setHint(toErrorHint(e));
     } finally {
-      setBusy(false);
+      setUploading(false);
     }
   }
 
   async function onDelete(photoId: string) {
-    if (!adId || !ad) return;
+    if (!canEdit) return;
 
-    const prev = ad;
-    const nextPhotos = (prev.photos ?? []).filter((p) => p.id !== photoId);
-
-    // optimistic UI
-    setAd({ ...prev, photos: nextPhotos });
     setError(null);
-    setBusy(true);
+    setHint(null);
+    setMutating(true);
 
     try {
-      const data = await AdsApi.deletePhoto(adId, photoId);
-      setAd(data);
-    } catch (err) {
-      // rollback
-      setAd(prev);
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
+      const res = await deleteAdPhoto({ adId, photoId });
+      if (res.photos) setPhotos(sortPhotosByOrder(res.photos));
+      else setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    } catch (e) {
+      setError(toMessage(e));
+      setHint(toErrorHint(e));
     } finally {
-      setBusy(false);
+      setMutating(false);
     }
   }
 
   async function onMove(photoId: string, dir: -1 | 1) {
-    if (!adId || !ad) return;
+    if (!canEdit) return;
 
-    const sorted = photos;
-    const idx = sorted.findIndex((p) => p.id === photoId);
+    const idx = photos.findIndex((p) => p.id === photoId);
+    if (idx === -1) return;
+
     const nextIdx = idx + dir;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= sorted.length) return;
+    if (nextIdx < 0 || nextIdx >= photos.length) return;
 
-    const prev = ad;
+    const optimistic = [...photos];
+    const [item] = optimistic.splice(idx, 1);
+    optimistic.splice(nextIdx, 0, item);
+    setPhotos(optimistic);
 
-    // build new order list (ids)
-    const ids = sorted.map((p) => p.id);
-    const tmp = ids[idx];
-    ids[idx] = ids[nextIdx];
-    ids[nextIdx] = tmp;
-
-    // optimistic: rebuild photos with new .order for UI
-    const byId = new Map((prev.photos ?? []).map((p) => [p.id, p] as const));
-    const optimisticPhotos = ids
-      .map((pid, i) => {
-        const p = byId.get(pid);
-        return p ? { ...p, order: i + 1 } : null;
-      })
-      .filter(Boolean) as NonNullable<AdsApi.AdDetails['photos']>;
-
-    setAd({ ...prev, photos: optimisticPhotos });
     setError(null);
-    setBusy(true);
+    setHint(null);
+    setMutating(true);
 
     try {
-      const data = await AdsApi.reorderPhotos(adId, ids);
-      setAd(data);
-    } catch (err) {
-      // rollback
-      setAd(prev);
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
+      const res = await reorderAdPhotos({ adId, photoIds: optimistic.map((p) => p.id) });
+      setPhotos(sortPhotosByOrder(res.photos));
+    } catch (e) {
+      setPhotos(sortPhotosByOrder(photos));
+      setError(toMessage(e));
+      setHint(toErrorHint(e));
     } finally {
-      setBusy(false);
+      setMutating(false);
     }
   }
 
-  async function onPublish() {
-    if (!adId || !ad) return;
-
-    setError(null);
-    setBusy(true);
-    try {
-      const data = await AdsApi.publish(adId);
-      setAd(data);
-      nav(`/ads/${data.id}`, { replace: true });
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
+  function onClickUpload() {
+    if (!canEdit || uploading || mutating) return;
+    fileInputRef.current?.click();
   }
 
-  if (!id) return <ErrorBox message="Missing id param" />;
+  if (loading) return <Loading />;
 
   return (
-    <div className="card">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>Draft photos</h2>
-        <Link to="/my-ads">Back to my ads</Link>
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <h2 style={{ margin: 0 }}>Draft photos</h2>
+          <div style={{ fontSize: 13, opacity: 0.8 }}>
+            <span>
+              Ad: <code>{adId}</code>
+            </span>
+            {' · '}
+            <span>
+              Status: <b>{ad?.status || '—'}</b>
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Link to={`/ads/${adId}`} style={{ textDecoration: 'none' }}>
+            ← Back to details
+          </Link>
+
+          <button
+            type="button"
+            onClick={onClickUpload}
+            disabled={!canEdit || uploading || mutating}
+            title={!canEdit ? 'Only owner can edit draft photos' : 'Upload photos'}
+          >
+            {uploading ? 'Uploading…' : 'Upload'}
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={onPickFiles}
+            style={{ display: 'none' }}
+          />
+        </div>
       </div>
 
-      {error && <ErrorBox message={error} />}
-      {loading && <Loading />}
+      {!isOwner && <ErrorBox message="Only the owner can edit photos." />}
 
-      {!loading && ad && (
-        <>
-          <div className="small muted">
-            adId: {ad.id} | status: {ad.status} | photos: {photos.length}
+      {ad && !isDraft(ad.status) && <ErrorBox message="Photos can be edited only for drafts." />}
+
+      {error && <ErrorBox message={hint ? `${error} — ${hint}` : error} />}
+
+      <div style={{ display: 'grid', gap: 10 }}>
+        {photos.length === 0 ? (
+          <div style={{ opacity: 0.8 }}>
+            No photos yet. {canEdit ? 'Upload the first one.' : ''}
           </div>
+        ) : (
+          photos.map((p, index) => {
+            const src = getPreviewFilePath(p) || p.filePath;
+            const canMutate = canEdit && !uploading && !mutating;
 
-          <div style={{ marginTop: 12 }} className="row">
-            <input
-              className="input"
-              type="file"
-              accept="image/*"
-              disabled={busy}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onAdd(f);
-                e.currentTarget.value = '';
-              }}
-            />
-            <button className="btn" onClick={refresh} disabled={busy}>
-              Refresh
-            </button>
+            return (
+              <div
+                key={p.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '96px 1fr auto',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: 10,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 10,
+                }}
+              >
+                <div
+                  style={{
+                    width: 96,
+                    height: 72,
+                    background: 'rgba(255,255,255,0.06)',
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    display: 'grid',
+                    placeItems: 'center',
+                  }}
+                >
+                  {src ? (
+                    <img
+                      src={src}
+                      alt={`photo ${index + 1}`}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span style={{ opacity: 0.7, fontSize: 12 }}>No preview</span>
+                  )}
+                </div>
 
-            <button className="btn" onClick={onPublish} disabled={!canPublish}>
-              Publish
-            </button>
-          </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <b>#{index + 1}</b>
+                    <code style={{ opacity: 0.85 }}>{p.id}</code>
+                  </div>
+                  <div style={{ fontSize: 13, opacity: 0.85 }}>
+                    order: <b>{p.order}</b>
+                    {p.createdAt ? (
+                      <>
+                        {' · '}
+                        <span>{new Date(p.createdAt).toLocaleString()}</span>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
 
-          {ad.status === 'draft' && photos.length === 0 && (
-            <div className="small muted" style={{ marginTop: 8 }}>
-              Add at least 1 photo to publish.
-            </div>
-          )}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button type="button" disabled={!canMutate || index === 0} onClick={() => onMove(p.id, -1)}>
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canMutate || index === photos.length - 1}
+                    onClick={() => onMove(p.id, 1)}
+                  >
+                    ↓
+                  </button>
+                  <button type="button" disabled={!canMutate} onClick={() => onDelete(p.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
 
-          <div style={{ marginTop: 12 }}>
-            {photos.length === 0 ? (
-              <p className="muted">No photos yet.</p>
-            ) : (
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
-                {photos.map((p, index) => {
-                  const isFirst = index === 0;
-                  const isLast = index === photos.length - 1;
-
-                  return (
-                    <li
-                      key={p.id}
-                      className="row"
-                      style={{
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        border: '1px solid rgba(0,0,0,0.08)',
-                        borderRadius: 10,
-                        padding: 10
-                      }}
-                    >
-                      <div className="row" style={{ gap: 12, alignItems: 'center' }}>
-                        <div className="small muted" style={{ width: 44 }}>
-                          #{p.order}
-                        </div>
-
-                        <img
-                          src={p.url}
-                          alt={`photo-${p.order}`}
-                          style={{
-                            width: 86,
-                            height: 86,
-                            objectFit: 'cover',
-                            borderRadius: 10,
-                            border: '1px solid rgba(0,0,0,0.08)'
-                          }}
-                        />
-
-                        <div style={{ display: 'grid', gap: 4 }}>
-                          <div className="small muted" style={{ maxWidth: 520, wordBreak: 'break-all' }}>
-                            {p.url}
-                          </div>
-                        </div>
-                      </div>
-
-                      <span className="row" style={{ gap: 8 }}>
-                        <button className="btn" disabled={busy || isFirst} onClick={() => onMove(p.id, -1)}>
-                          ↑
-                        </button>
-                        <button className="btn" disabled={busy || isLast} onClick={() => onMove(p.id, 1)}>
-                          ↓
-                        </button>
-                        <button className="btn danger" disabled={busy} onClick={() => onDelete(p.id)}>
-                          Delete
-                        </button>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </>
-      )}
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        Tip: reordering is optimistic — if backend rejects, the order is rolled back.
+      </div>
     </div>
   );
 }

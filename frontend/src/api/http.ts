@@ -15,18 +15,14 @@ export class ApiError extends Error {
 }
 
 function normalizePath(path: string): string {
+  if (!path) return '/';
   return path.startsWith('/') ? path : `/${path}`;
 }
 
 /**
- * Build request URL.
- *
- * DEV rule:
- * - If path starts with /api/, ALWAYS use a relative URL so Vite proxy can forward to backend.
- *   This avoids CORS during local development.
- *
- * PROD rule:
- * - If VITE_API_BASE_URL is provided, we prefix it. Otherwise we use relative.
+ * - If VITE_API_BASE_URL is provided, we prefix it.
+ * - Otherwise we use relative (Vite proxy in dev).
+ * - In dev, we force relative for /api/* to use Vite proxy even if base is set.
  */
 function buildUrl(path: string): string {
   const p = normalizePath(path);
@@ -38,11 +34,15 @@ function buildUrl(path: string): string {
   return `${base}${p}`;
 }
 
-async function readJsonSafely(res: Response): Promise<any | null> {
+function hasErrorShape(x: unknown): x is Partial<ApiErrorShape> {
+  return typeof x === 'object' && x !== null && ('error' in x || 'message' in x);
+}
+
+async function readJsonSafely(res: Response): Promise<unknown | null> {
   const text = await res.text();
   if (!text) return null;
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
@@ -56,7 +56,7 @@ export async function apiFetch<TData>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(init.headers as Record<string, string> | undefined)
+    ...(init.headers as Record<string, string> | undefined),
   };
 
   if (init.auth !== false) {
@@ -64,26 +64,34 @@ export async function apiFetch<TData>(
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers });
+  } catch {
+    throw new ApiError({ errorCode: 'NETWORK_ERROR', message: 'Failed to fetch', status: 0 });
+  }
 
   const payload = await readJsonSafely(res);
 
   if (!res.ok) {
-    const err = (payload ?? {}) as Partial<ApiErrorShape>;
+    const err = hasErrorShape(payload) ? payload : {};
+    const errorCode =
+      typeof err.error === 'string' && err.error.trim() ? err.error : 'HTTP_ERROR';
+    const message =
+      typeof err.message === 'string' && err.message.trim()
+        ? err.message
+        : `Request failed with status ${res.status}`;
+
     throw new ApiError({
-      errorCode: err.error ?? 'HTTP_ERROR',
-      message: err.message ?? `Request failed with status ${res.status}`,
-      status: res.status
+      errorCode,
+      message,
+      status: res.status,
     });
   }
 
-  // Success MUST be { data: ... }
+  // Expect backend response contract: { data: ... }
   if (!payload || typeof payload !== 'object' || !('data' in payload)) {
-    throw new ApiError({
-      errorCode: 'BAD_RESPONSE',
-      message: 'Expected success response shape: { data: ... }',
-      status: 0
-    });
+    throw new ApiError({ errorCode: 'BAD_RESPONSE', message: 'Expected { data }', status: 0 });
   }
 
   return (payload as { data: TData }).data;

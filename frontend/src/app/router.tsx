@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { createBrowserRouter } from 'react-router-dom';
 import { AppRoot } from './App';
 import { RequireAuth, RequireLocation } from './guards';
