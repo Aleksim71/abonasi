@@ -5,21 +5,35 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // ⛔️ игнорируем build / cache / deps
   {
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    ignores: ['dist/**', '.vite/**', 'node_modules/**'],
+  },
+
+  // ✅ основной конфиг
+  {
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+    ],
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,
-      globals: globals.browser
+      globals: globals.browser,
     },
     plugins: {
       'react-hooks': reactHooks,
-      'react-refresh': reactRefresh
+      'react-refresh': reactRefresh,
     },
     rules: {
+      // React hooks
       ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }]
-    }
+
+      // Vite fast-refresh (warnings — ок)
+      'react-refresh/only-export-components': [
+        'warn',
+        { allowConstantExport: true },
+      ],
+    },
   }
 );
