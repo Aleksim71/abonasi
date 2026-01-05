@@ -1,6 +1,21 @@
-import { apiFetch, ApiError } from './http';
+// frontend/src/api/ads.api.ts
+import { apiFetch } from './http';
 
 export type AdStatus = 'draft' | 'active' | 'stopped';
+
+export type AdPhoto = {
+  id: string;
+  filePath: string;
+  sortOrder: number;
+  createdAt?: string;
+};
+
+export type AdPreviewPhoto = {
+  id: string;
+  filePath: string;
+  sortOrder: number;
+  createdAt?: string;
+};
 
 export type AdListItem = {
   id: string;
@@ -11,11 +26,16 @@ export type AdListItem = {
   locationId: string;
   ownerId?: string | null;
   createdAt?: string;
+
+  // backend feed extras
+  previewPhoto?: AdPreviewPhoto | null;
+  photosCount?: number;
 };
 
 export type AdDetails = AdListItem & {
   description?: string | null;
-  photos?: Array<{ id: string; url: string; order: number }>;
+  userId?: string | null;
+  photos?: AdPhoto[];
 };
 
 export function feed(params: { locationId: string }): Promise<AdListItem[]> {
@@ -50,47 +70,29 @@ export function restart(id: string): Promise<AdDetails> {
   return apiFetch<AdDetails>(`/api/ads/${id}/restart`, { method: 'POST' });
 }
 
-// Photos
-export async function addPhoto(id: string, file: File): Promise<AdDetails> {
-  // Backend likely expects multipart/form-data. We keep fetch here explicit and still enforce {data} response.
-  const baseUrl = (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:3001';
-  const url = `${baseUrl}/api/ads/${id}/photos`;
-  const form = new FormData();
-  form.append('photo', file);
+// Photos (current backend MVP contract: JSON { filePath, sortOrder })
+export type PhotosPatchResponse = { adId: string; photos: AdPhoto[] };
 
-  const token = localStorage.getItem('token');
-  const res = await fetch(url, {
+export function addPhoto(adId: string, body: { filePath: string; sortOrder?: number }): Promise<PhotosPatchResponse> {
+  return apiFetch<PhotosPatchResponse>(`/api/ads/${adId}/photos`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: JSON.stringify({
+      filePath: body.filePath,
+      sortOrder: body.sortOrder ?? 0
+    })
   });
-
-  const text = await res.text();
-  const payload = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
-
-  if (!res.ok) {
-    const err = (payload ?? {}) as any;
-    throw new ApiError({
-      errorCode: err.error ?? 'HTTP_ERROR',
-      message: err.message ?? `Request failed with status ${res.status}`,
-      status: res.status
-    });
-  }
-
-  if (!payload || typeof payload !== 'object' || !('data' in payload)) {
-    throw new ApiError({ errorCode: 'BAD_RESPONSE', message: 'Expected { data }', status: 0 });
-  }
-
-  return payload.data as AdDetails;
 }
 
-export function deletePhoto(adId: string, photoId: string): Promise<AdDetails> {
-  return apiFetch<AdDetails>(`/api/ads/${adId}/photos/${photoId}`, { method: 'DELETE' });
+export function deletePhoto(adId: string, photoId: string): Promise<PhotosPatchResponse> {
+  return apiFetch<PhotosPatchResponse>(`/api/ads/${adId}/photos/${photoId}`, { method: 'DELETE' });
 }
 
-export function reorderPhotos(adId: string, orderedPhotoIds: string[]): Promise<AdDetails> {
-  return apiFetch<AdDetails>(`/api/ads/${adId}/photos/reorder`, {
+export function reorderPhotos(
+  adId: string,
+  items: Array<{ photoId: string; sortOrder: number }>
+): Promise<PhotosPatchResponse> {
+  return apiFetch<PhotosPatchResponse>(`/api/ads/${adId}/photos/reorder`, {
     method: 'PATCH',
-    body: JSON.stringify({ photoIds: orderedPhotoIds })
+    body: JSON.stringify({ items })
   });
 }
