@@ -1,34 +1,32 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import { clearLocationId, getLocationId, setLocationId } from '../utils/storage';
+// frontend/src/store/location.store.tsx
+import { create } from 'zustand';
+import {
+  INITIAL_LOCATION_STATE,
+  formatLocation,
+  type LocationItem,
+} from './location.constants';
 
-type LocationState = {
-  locationId: string | null;
-  setLocation: (id: string) => void;
-  clearLocation: () => void;
+type LocationState = LocationItem & {
+  setCountry: (country: string | undefined) => void;
+  setCity: (city: string | undefined) => void;
+  setDistrict: (district: string | undefined) => void;
+  reset: () => void;
+  asLabel: () => string;
 };
 
-const LocationCtx = createContext<LocationState | null>(null);
+export const useLocationStore = create<LocationState>((set, get) => ({
+  ...INITIAL_LOCATION_STATE,
 
-export function LocationProvider({ children }: { children: React.ReactNode }) {
-  const [locationIdState, setLocationIdState] = useState<string | null>(() => getLocationId());
+  setCountry: (country) => set({ country }),
+  setCity: (city) => set({ city }),
+  setDistrict: (district) => set({ district }),
 
-  const value = useMemo<LocationState>(() => ({
-    locationId: locationIdState,
-    setLocation: (id) => {
-      setLocationId(id);
-      setLocationIdState(id);
-    },
-    clearLocation: () => {
-      clearLocationId();
-      setLocationIdState(null);
-    }
-  }), [locationIdState]);
+  reset: () => set({ ...INITIAL_LOCATION_STATE }),
 
-  return <LocationCtx.Provider value={value}>{children}</LocationCtx.Provider>;
-}
-
-export function useLocationStore() {
-  const ctx = useContext(LocationCtx);
-  if (!ctx) throw new Error('useLocationStore must be used within LocationProvider');
-  return ctx;
-}
+  asLabel: () =>
+    formatLocation({
+      country: get().country,
+      city: get().city,
+      district: get().district,
+    }),
+}));

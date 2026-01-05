@@ -80,14 +80,15 @@ export function AdDetailsPage() {
             <div>
               <div className="small muted">Photos:</div>
               <ul>
-                {ad.photos
-                  .slice()
-                  .sort((a, b) => a.order - b.order)
-                  .map((p) => (
-                    <li key={p.id}>
-                      <span className="small muted">#{p.order}</span> {p.url}
-                    </li>
-                  ))}
+           {ad.photos
+  .slice()
+  .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+  .map((p, idx) => (
+    <li key={p.id}>
+      <span className="small muted">#{idx + 1}</span> {p.filePath}
+    </li>
+  ))}
+
               </ul>
             </div>
           )}

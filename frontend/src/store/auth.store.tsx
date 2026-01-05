@@ -1,43 +1,23 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import type { Me } from '../api/auth.api';
-import { clearLocationId, clearToken, getToken, setToken } from '../utils/storage';
+import { create } from 'zustand';
 
-type AuthState = {
-  token: string | null;
-  user: Me | null;
-  setAuth: (token: string, user: Me) => void;
-  setUser: (user: Me | null) => void;
-  logout: () => void;
+export type AuthUser = {
+  id: string;
+  email?: string;
+  name?: string;
 };
 
-const AuthCtx = createContext<AuthState | null>(null);
+type AuthState = {
+  user: AuthUser | null;
+  token: string | null;
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setTokenState] = useState<string | null>(() => getToken());
-  const [user, setUser] = useState<Me | null>(null);
+  setAuth: (user: AuthUser, token: string) => void;
+  clearAuth: () => void;
+};
 
-  const value = useMemo<AuthState>(() => ({
-    token,
-    user,
-    setAuth: (t, u) => {
-      setToken(t);
-      setTokenState(t);
-      setUser(u);
-    },
-    setUser,
-    logout: () => {
-      clearToken();
-      clearLocationId();
-      setTokenState(null);
-      setUser(null);
-    }
-  }), [token, user]);
+export const useAuth = create<AuthState>((set) => ({
+  user: null,
+  token: null,
 
-  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
-}
+  setAuth: (user, token) => set({ user, token }),
+  clearAuth: () => set({ user: null, token: null }),
+}));
