@@ -1,39 +1,46 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
-import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
-  // ⛔️ игнорируем build / cache / deps
-  {
-    ignores: ['dist/**', '.vite/**', 'node_modules/**'],
-  },
+export default [
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
 
-  // ✅ основной конфиг
   {
-    extends: [
-      js.configs.recommended,
-      ...tseslint.configs.recommended,
-    ],
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
-      ecmaVersion: 2022,
-      globals: globals.browser,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.browser
+      }
     },
     plugins: {
       'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
+      'react-refresh': reactRefresh
     },
     rules: {
-      // React hooks
       ...reactHooks.configs.recommended.rules,
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }]
+    }
+  },
 
-      // Vite fast-refresh (warnings — ок)
-      'react-refresh/only-export-components': [
-        'warn',
-        { allowConstantExport: true },
-      ],
+  // ✅ Tests (Vitest/RTL): allow explicit any only in test files/folders
+  {
+    files: [
+      'src/**/*.test.{ts,tsx}',
+      'src/**/__tests__/**/*.{ts,tsx}',
+      'src/**/_tests_/**/*.{ts,tsx}'
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.node
+      }
     },
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off'
+    }
   }
-);
+];
