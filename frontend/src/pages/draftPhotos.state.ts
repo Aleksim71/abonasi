@@ -1,6 +1,3 @@
-// frontend/src/pages/draftPhotos.state.ts
-// Чистая логика стейта: reducer + утилиты (без JSX)
-
 export type UploadStatus = 'queued' | 'uploading' | 'success' | 'error' | 'canceled';
 
 export type UploadItem = {
@@ -35,6 +32,7 @@ export type DraftPhotosAction =
   | { type: 'UPLOAD_ERROR'; payload: { localId: string; message: string } }
   | { type: 'REMOVE_UPLOAD'; payload: { localId: string } }
   | { type: 'SET_COVER'; payload: { photoId: string | null } }
+  | { type: 'MOVE_PHOTO'; payload: { fromIndex: number; toIndex: number } }
   | { type: 'SET_PAGE_ERROR'; payload: { message: string } }
   | { type: 'RESET_PAGE_ERROR' };
 
@@ -45,10 +43,6 @@ export const initialDraftPhotosState: DraftPhotosUiState = {
   isUploading: false,
   pageError: undefined
 };
-
-// --------------------------------------------------
-// helpers (pure)
-// --------------------------------------------------
 
 function clampProgress(n: number) {
   if (!Number.isFinite(n)) return 0;
@@ -85,19 +79,26 @@ function upsertPhoto(photos: ServerPhoto[], photo: ServerPhoto): ServerPhoto[] {
   return next;
 }
 
+function computeIsUploading(uploads: UploadItem[]) {
+  return uploads.some((u) => u.status === 'queued' || u.status === 'uploading');
+}
+
 function ensureCoverStillValid(photos: ServerPhoto[], coverPhotoId: string | null) {
   if (!coverPhotoId) return null;
   const exists = photos.some((p) => p.id === coverPhotoId);
   return exists ? coverPhotoId : (photos[0]?.id ?? null);
 }
 
-function computeIsUploading(uploads: UploadItem[]) {
-  return uploads.some((u) => u.status === 'queued' || u.status === 'uploading');
-}
+function moveItem<T>(arr: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return arr;
+  if (fromIndex < 0 || fromIndex >= arr.length) return arr;
+  if (toIndex < 0 || toIndex >= arr.length) return arr;
 
-// --------------------------------------------------
-// reducer
-// --------------------------------------------------
+  const next = arr.slice();
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
 
 export function draftPhotosReducer(
   state: DraftPhotosUiState,
@@ -119,8 +120,6 @@ export function draftPhotosReducer(
     }
 
     case 'START_UPLOAD': {
-      // ✅ ключевой фикс для Retry:
-      // сбрасываем прогресс, ошибку и прошлый server-результат
       const uploads = updateUploadById(state.uploads, action.payload.localId, (u) => ({
         ...u,
         status: 'uploading',
@@ -138,14 +137,10 @@ export function draftPhotosReducer(
     }
 
     case 'PROGRESS': {
-      const uploads = updateUploadById(
-        state.uploads,
-        action.payload.localId,
-        (u) => {
-          if (u.status !== 'uploading' && u.status !== 'queued') return u;
-          return { ...u, progress: clampProgress(action.payload.progress) };
-        }
-      );
+      const uploads = updateUploadById(state.uploads, action.payload.localId, (u) => {
+        if (u.status !== 'uploading' && u.status !== 'queued') return u;
+        return { ...u, progress: clampProgress(action.payload.progress) };
+      });
 
       return {
         ...state,
@@ -155,18 +150,14 @@ export function draftPhotosReducer(
     }
 
     case 'UPLOAD_SUCCESS': {
-      const uploads = updateUploadById(
-        state.uploads,
-        action.payload.localId,
-        (u) => ({
-          ...u,
-          status: 'success',
-          progress: 100,
-          errorMessage: undefined,
-          serverPhotoId: action.payload.serverPhoto.id,
-          serverUrl: action.payload.serverPhoto.url
-        })
-      );
+      const uploads = updateUploadById(state.uploads, action.payload.localId, (u) => ({
+        ...u,
+        status: 'success',
+        progress: 100,
+        errorMessage: undefined,
+        serverPhotoId: action.payload.serverPhoto.id,
+        serverUrl: action.payload.serverPhoto.url
+      }));
 
       const photos = upsertPhoto(state.photos, action.payload.serverPhoto);
       const coverPhotoId = state.coverPhotoId ?? (photos[0]?.id ?? null);
@@ -181,16 +172,11 @@ export function draftPhotosReducer(
     }
 
     case 'UPLOAD_ERROR': {
-      const uploads = updateUploadById(
-        state.uploads,
-        action.payload.localId,
-        (u) => ({
-          ...u,
-          status: 'error',
-          // прогресс не откатываем назад, но и не форсим 0
-          errorMessage: action.payload.message || 'Upload failed'
-        })
-      );
+      const uploads = updateUploadById(state.uploads, action.payload.localId, (u) => ({
+        ...u,
+        status: 'error',
+        errorMessage: action.payload.message || 'Upload failed'
+      }));
 
       return {
         ...state,
@@ -210,6 +196,7 @@ export function draftPhotosReducer(
 
     case 'SET_COVER': {
       const nextCover = action.payload.photoId;
+
       const coverPhotoId =
         nextCover === null
           ? null
@@ -218,6 +205,13 @@ export function draftPhotosReducer(
             : state.coverPhotoId;
 
       return { ...state, coverPhotoId };
+    }
+
+    case 'MOVE_PHOTO': {
+      const { fromIndex, toIndex } = action.payload;
+      const photos = moveItem(state.photos, fromIndex, toIndex);
+      const coverPhotoId = ensureCoverStillValid(photos, state.coverPhotoId);
+      return { ...state, photos, coverPhotoId };
     }
 
     case 'SET_PAGE_ERROR':
@@ -229,32 +223,4 @@ export function draftPhotosReducer(
     default:
       return state;
   }
-}
-
-// --------------------------------------------------
-// selectors
-// --------------------------------------------------
-
-export function selectUploads(state: DraftPhotosUiState) {
-  return state.uploads;
-}
-
-export function selectPhotos(state: DraftPhotosUiState) {
-  return state.photos;
-}
-
-export function selectCover(state: DraftPhotosUiState) {
-  if (!state.coverPhotoId) return null;
-  return state.photos.find((p) => p.id === state.coverPhotoId) || null;
-}
-
-export function normalizeCoverAfterPhotosChange(
-  state: DraftPhotosUiState
-): DraftPhotosUiState {
-  const coverPhotoId = ensureCoverStillValid(
-    state.photos,
-    state.coverPhotoId
-  );
-  if (coverPhotoId === state.coverPhotoId) return state;
-  return { ...state, coverPhotoId };
 }
