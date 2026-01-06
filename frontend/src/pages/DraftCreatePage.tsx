@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as AdsApi from '../api/ads.api';
 import { ApiError } from '../api/http';
@@ -6,9 +6,67 @@ import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 import { useLocationStore } from '../store/location.store';
 
+// -----------------------------
+// helpers
+// -----------------------------
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function pickString(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return null;
+}
+
+function extractLocationIdFromStore(store: unknown): string | null {
+  if (!isRecord(store)) return null;
+
+  // 1) direct id fields
+  const direct = pickString(store, [
+    'locationId',
+    'location_id',
+    'selectedLocationId',
+    'currentLocationId'
+  ]);
+  if (direct) return direct;
+
+  // 2) nested object candidates
+  const nestedCandidates: unknown[] = [
+    store.selectedLocation,
+    store.currentLocation,
+    store.location,
+    store.selected,
+    store.current
+  ];
+
+  for (const cand of nestedCandidates) {
+    if (!isRecord(cand)) continue;
+    const id = pickString(cand, ['id', 'locationId', 'uuid']);
+    if (id) return id;
+  }
+
+  // 3) sometimes selectedId/currentId
+  const selectedId = pickString(store, ['selectedId', 'currentId']);
+  if (selectedId) return selectedId;
+
+  return null;
+}
+
+// -----------------------------
+// page
+// -----------------------------
 export function DraftCreatePage() {
   const nav = useNavigate();
-  const { locationId } = useLocationStore();
+
+  // Zustand store returns whole state
+  const locationStore = useLocationStore() as unknown;
+  const locationId = useMemo(
+    () => extractLocationIdFromStore(locationStore),
+    [locationStore]
+  );
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -17,49 +75,66 @@ export function DraftCreatePage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!locationId) return;
+
+    if (!locationId) {
+      setError('Сначала выберите локацию');
+      return;
+    }
+
     setError(null);
     setLoading(true);
+
     try {
-      const draft = await AdsApi.createDraft({ locationId, title, description });
-      nav(`/draft/${draft.id}/photos`, { replace: true });
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
-      setError(msg);
+      const ad = await AdsApi.createDraft({
+        title,
+        description,
+        locationId
+      });
+
+      nav(`/ads/${ad.id}/photos`);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message || 'Не удалось создать черновик');
+      } else {
+        setError('Не удалось создать черновик');
+      }
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="card">
-      <h2>Create draft</h2>
+    <div style={{ padding: 16 }}>
+      <h1>Новое объявление</h1>
 
-      {error && <ErrorBox message={error} />}
+      {error && <ErrorBox title="Ошибка" message={error} />}
 
-      <form onSubmit={onSubmit}>
-        <div className="row" style={{ alignItems: 'flex-end' }}>
-          <label>
-            <div className="small muted">Title</div>
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <button className="btn" disabled={loading || !title}>
-            Create
-          </button>
-        </div>
+      <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12, maxWidth: 480 }}>
+        <input
+          placeholder="Заголовок"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          disabled={loading}
+        />
 
-        <label style={{ display: 'block', marginTop: 12 }}>
-          <div className="small muted">Description (optional)</div>
-          <textarea
-            className="input"
-            style={{ width: '100%', minHeight: 120 }}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
+        <textarea
+          placeholder="Описание"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          disabled={loading}
+          rows={5}
+        />
+
+        <button type="submit" disabled={loading || !locationId}>
+          {loading ? <Loading /> : 'Продолжить'}
+        </button>
+
+        {!locationId && (
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            Сначала выберите локацию
+          </div>
+        )}
       </form>
-
-      {loading && <Loading />}
     </div>
   );
 }
