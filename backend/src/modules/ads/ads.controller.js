@@ -62,13 +62,6 @@ function mapAdRowToDto(r) {
   };
 }
 
-function mapAdRowWithLocationToDto(r) {
-  return {
-    ...mapAdRowToDto(r),
-    location: r.country || r.city || r.district ? { country: r.country, city: r.city, district: r.district } : undefined
-  };
-}
-
 /**
  * POST /api/ads
  * requires auth
@@ -905,28 +898,63 @@ async function deletePhotoFromDraft(req, res) {
 }
 
 /**
- * PUT /api/ads/:id/photos/reorder
+ * PATCH /api/ads/:id/photos/reorder
  * requires auth
- * body: { items: [{ photoId, sortOrder }] }
+ *
+ * body (supported):
+ *  A) { items: [{ photoId, sortOrder }] }
+ *  B) { photoIds: [uuid, uuid, ...] }  // server will assign 0..n-1
+ *
  * MVP: only owner + only draft
  */
 async function reorderPhotosInDraft(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
-  const items = req.body?.items;
+
+  const itemsRaw = req.body?.items;
+  const photoIdsRaw = req.body?.photoIds;
 
   if (!isUuid(adId)) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
-  if (!Array.isArray(items) || items.length === 0) {
-    return res
-      .status(400)
-      .json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
+
+  let items = null;
+
+  // B) photoIds -> items with sortOrder 0..n-1
+  if (Array.isArray(photoIdsRaw)) {
+    if (photoIdsRaw.length === 0) {
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'photoIds must be a non-empty array' });
+    }
+    items = photoIdsRaw.map((pid, idx) => ({
+      photoId: String(pid || '').trim(),
+      sortOrder: idx
+    }));
+  } else if (Array.isArray(itemsRaw)) {
+    if (itemsRaw.length === 0) {
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
+    }
+    items = itemsRaw.map((it) => ({
+      photoId: String(it?.photoId || '').trim(),
+      sortOrder: Number(it?.sortOrder)
+    }));
+  } else {
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'provide either items[] or photoIds[]'
+    });
   }
 
+  // validate + uniqueness
+  const seenIds = new Set();
+  const seenOrders = new Set();
+
   for (const it of items) {
-    const photoId = String(it?.photoId || '').trim();
-    const sortOrder = Number(it?.sortOrder);
+    const photoId = it.photoId;
+    const sortOrder = it.sortOrder;
 
     if (!isUuid(photoId)) {
       return res
@@ -938,6 +966,20 @@ async function reorderPhotosInDraft(req, res) {
         .status(400)
         .json({ error: 'BAD_REQUEST', message: 'each item.sortOrder must be integer 0..50' });
     }
+
+    if (seenIds.has(photoId)) {
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'duplicate photoId in payload' });
+    }
+    seenIds.add(photoId);
+
+    if (seenOrders.has(sortOrder)) {
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'duplicate sortOrder in payload' });
+    }
+    seenOrders.add(sortOrder);
   }
 
   const client = await pool.connect();
@@ -955,7 +997,9 @@ async function reorderPhotosInDraft(req, res) {
         .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
-    const ids = items.map((x) => String(x.photoId).trim());
+    const ids = items.map((x) => x.photoId);
+
+    // ensure all ids belong to ad
     const own = await client.query(
       `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
       [adId, ids]
@@ -967,17 +1011,26 @@ async function reorderPhotosInDraft(req, res) {
         .json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [
-      adId
-    ]);
+    // temporary shift to avoid unique(sort_order) collisions
+    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [adId]);
 
-    for (const it of items) {
-      await client.query(`UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`, [
-        it.sortOrder,
-        it.photoId,
-        adId
-      ]);
-    }
+    // bulk update using unnest
+    const orders = items.map((x) => x.sortOrder);
+
+    await client.query(
+      `
+      WITH v AS (
+        SELECT
+          unnest($1::uuid[]) AS id,
+          unnest($2::int[])  AS sort_order
+      )
+      UPDATE ad_photos p
+      SET sort_order = v.sort_order
+      FROM v
+      WHERE p.ad_id = $3 AND p.id = v.id
+      `,
+      [ids, orders, adId]
+    );
 
     await client.query('COMMIT');
 
