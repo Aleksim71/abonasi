@@ -1,13 +1,8 @@
-import { Layout } from '../ui/Layout';
-import { AuthProvider } from '../store/auth.store';
-import { LocationProvider } from '../store/location.store';
+// frontend/src/app/App.tsx
+'use strict';
+
+import { Outlet } from 'react-router-dom';
 
 export function AppRoot() {
-  return (
-    <AuthProvider>
-      <LocationProvider>
-        <Layout />
-      </LocationProvider>
-    </AuthProvider>
-  );
+  return <Outlet />;
 }
