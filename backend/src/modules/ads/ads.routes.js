@@ -42,6 +42,12 @@ router.get('/:id/versions', optionalAuth, ads.getAdVersions);
  */
 router.post('/:id/photos', requireAuth, ads.addPhotoToDraft);
 router.delete('/:id/photos/:photoId', requireAuth, ads.deletePhotoFromDraft);
+
+/**
+ * ✅ Persist photos order (DnD reorder)
+ * PATCH /api/ads/:id/photos/reorder
+ * Body: { photoIds: string[] }
+ */
 router.patch('/:id/photos/reorder', requireAuth, ads.reorderPhotosInDraft);
 
 module.exports = router;
