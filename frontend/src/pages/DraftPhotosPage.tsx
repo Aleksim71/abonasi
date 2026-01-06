@@ -1,5 +1,4 @@
-// frontend/src/pages/DraftPhotosPage.tsx
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
@@ -13,9 +12,6 @@ import {
   type ServerPhoto
 } from './draftPhotos.state';
 
-// -----------------------------
-// Safe helpers (do not trust API shape)
-// -----------------------------
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
@@ -57,11 +53,6 @@ function clampPercent(n: number): number {
 }
 
 function extractFirstPhotoFromResponse(res: unknown): unknown {
-  // Accept shapes:
-  // - { photo: {...} }
-  // - { photos: [...] }
-  // - { items: [...] }
-  // - [...]
   if (Array.isArray(res)) return res[0];
 
   if (isRecord(res)) {
@@ -86,7 +77,6 @@ export function DraftPhotosPage() {
 
   const [state, dispatch] = useReducer(draftPhotosReducer, initialDraftPhotosState);
 
-  // Keep a registry of object URLs for cleanup
   const objectUrlsRef = useRef<Map<string, string>>(new Map());
 
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
@@ -111,7 +101,6 @@ export function DraftPhotosPage() {
     dispatch({ type: 'START_UPLOAD', payload: { localId } });
 
     try {
-      // Important trick: payload variable -> avoids excess-property error without "any"
       const payload: Parameters<typeof PhotosApi.uploadAdPhotosMultipart>[0] & {
         onUploadProgress?: (evt: unknown) => void;
       } = {
@@ -119,7 +108,6 @@ export function DraftPhotosPage() {
         files: [file],
         token,
         onUploadProgress: (evt: unknown) => {
-          // Axios-like: { loaded, total } or custom percent/progress
           if (typeof evt === 'number') {
             dispatch({ type: 'PROGRESS', payload: { localId, progress: clampPercent(evt) } });
             return;
@@ -141,7 +129,6 @@ export function DraftPhotosPage() {
       };
 
       const res = await PhotosApi.uploadAdPhotosMultipart(payload);
-
       const candidate = extractFirstPhotoFromResponse(res);
 
       const serverPhoto: ServerPhoto = {
@@ -180,7 +167,6 @@ export function DraftPhotosPage() {
 
     dispatch({ type: 'ADD_FILES', payload: { items } });
 
-    // Upload in parallel (per-file progress)
     await Promise.allSettled(items.map((it) => uploadOne(it.localId, it.file)));
   }
 
@@ -203,6 +189,31 @@ export function DraftPhotosPage() {
     void uploadOne(localId, item.file);
   }
 
+  function setCover(photoId: string) {
+    dispatch({ type: 'SET_COVER', payload: { photoId } });
+  }
+
+  function movePhoto(fromIndex: number, toIndex: number) {
+    dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
+  }
+
+  // HTML5 DnD (optional in tests; kept for real UX)
+  function onDragStart(e: React.DragEvent<HTMLDivElement>, fromIndex: number) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(fromIndex));
+  }
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }
+  function onDrop(e: React.DragEvent<HTMLDivElement>, toIndex: number) {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData('text/plain');
+    const fromIndex = Number(raw);
+    if (!Number.isFinite(fromIndex)) return;
+    movePhoto(fromIndex, toIndex);
+  }
+
   if (!adId) {
     return <ErrorBox title="Ошибка" message="Нет adId в URL (ожидался параметр :id)." />;
   }
@@ -216,7 +227,6 @@ export function DraftPhotosPage() {
       {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
 
       <div style={{ marginBottom: 12 }}>
-        {/* IMPORTANT: input always in DOM for stable tests */}
         <input
           type="file"
           multiple
@@ -299,22 +309,97 @@ export function DraftPhotosPage() {
       {state.photos.length > 0 && (
         <div style={{ marginTop: 18 }}>
           <h2 style={{ margin: '0 0 10px', fontSize: 16 }}>Загруженные фото</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {state.photos.map((p) => (
-              <div
-                key={p.id}
-                style={{
-                  width: 120,
-                  height: 90,
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  border: state.coverPhotoId === p.id ? '2px solid #111' : '1px solid #ddd'
-                }}
-                title={state.coverPhotoId === p.id ? 'Cover' : undefined}
-              >
-                <img src={p.url} alt="uploaded" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              </div>
-            ))}
+
+          <div data-testid="server-photos" style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {state.photos.map((p, idx) => {
+              const isCover = state.coverPhotoId === p.id;
+
+              return (
+                <div
+                  key={p.id}
+                  data-testid={`server-photo-${p.id}`}
+                  data-photo-id={p.id}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, idx)}
+                  onDragOver={onDragOver}
+                  onDrop={(e) => onDrop(e, idx)}
+                  style={{
+                    width: 160,
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    border: isCover ? '2px solid #111' : '1px solid #ddd',
+                    background: '#fff'
+                  }}
+                >
+                  <div style={{ position: 'relative', width: '100%', height: 90 }}>
+                    <img
+                      src={p.url}
+                      alt="uploaded"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+
+                    {isCover && (
+                      <span
+                        data-testid="cover-badge"
+                        style={{
+                          position: 'absolute',
+                          top: 6,
+                          left: 6,
+                          background: '#111',
+                          color: '#fff',
+                          fontSize: 12,
+                          padding: '2px 8px',
+                          borderRadius: 999
+                        }}
+                      >
+                        Cover
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 6, padding: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setCover(p.id)}
+                      disabled={isCover}
+                      style={{ width: '100%' }}
+                    >
+                      {isCover ? 'Cover' : 'Make cover'}
+                    </button>
+
+                    {/* fallback controls used in tests */}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        aria-label={`Move photo ${idx} up`}
+                        data-testid={`move-up-${p.id}`}
+                        onClick={() => movePhoto(idx, idx - 1)}
+                        disabled={idx === 0}
+                        style={{ width: '100%' }}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move photo ${idx} down`}
+                        data-testid={`move-down-${p.id}`}
+                        onClick={() => movePhoto(idx, idx + 1)}
+                        disabled={idx === state.photos.length - 1}
+                        style={{ width: '100%' }}
+                      >
+                        ↓
+                      </button>
+                    </div>
+
+                    <div style={{ fontSize: 11, opacity: 0.65 }}>Drag to reorder</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+            Можно перетаскивать карточки для reorder. В тестах reorder проверяем через кнопки ↑↓.
           </div>
         </div>
       )}

@@ -1,74 +1,97 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+vi.mock('../../store/auth.store', () => ({
+  useAuth: () => ({ token: 'test-token' })
+}));
+
+const uploadSpy = vi.fn();
+
+vi.mock('../../api/photos.api', () => ({
+  uploadAdPhotosMultipart: (...args: unknown[]) => uploadSpy(...args)
+}));
+
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-
-const photosApiMock = vi.hoisted(() => {
-  return {
-    uploadAdPhotosMultipart: vi.fn(),
-    reorderAdPhotos: vi.fn(),
-    sortPhotosByOrder: vi.fn((photos: any[]) => photos)
-  };
-});
-
-vi.mock('../../api/photos.api', () => {
-  return {
-    uploadAdPhotosMultipart: photosApiMock.uploadAdPhotosMultipart,
-    reorderAdPhotos: photosApiMock.reorderAdPhotos,
-    sortPhotosByOrder: photosApiMock.sortPhotosByOrder
-  };
-});
-
-vi.mock('../../store/auth.store', () => {
-  return {
-    useAuth: () => ({
-      user: { id: 'u1', email: 'u1@example.com' },
-      token: 'TEST_TOKEN'
-    })
-  };
-});
-
 import { DraftPhotosPage } from '../../pages/DraftPhotosPage';
 
-function renderPage() {
-  return render(
-    <MemoryRouter initialEntries={['/draft/111/photos']}>
-      <Routes>
-        <Route path="/draft/:id/photos" element={<DraftPhotosPage />} />
-      </Routes>
-    </MemoryRouter>
-  );
+function getOrderFromServerPhotos(): string[] {
+  const container = screen.getByTestId('server-photos');
+  const ids: string[] = [];
+  for (const el of Array.from(container.children)) {
+    const id = el.getAttribute('data-photo-id');
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 describe('DraftPhotosPage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  it('renders upload control (file input)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/ads/123/photos']}>
+        <Routes>
+          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
 
-    photosApiMock.uploadAdPhotosMultipart.mockResolvedValue({
-      photos: [{ id: 'p1', src: '/uploads/p1.jpg' }]
+    expect(screen.getByTestId('photo-file')).toBeInTheDocument();
+  });
+
+  it('upload calls uploadAdPhotosMultipart', async () => {
+    uploadSpy.mockResolvedValueOnce({
+      photo: { id: 'p1', url: 'https://example.com/p1.jpg' }
     });
-  });
 
-  test('renders upload control (file input)', async () => {
-    renderPage();
+    render(
+      <MemoryRouter initialEntries={['/ads/123/photos']}>
+        <Routes>
+          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
 
-    const input = await screen.findByTestId('photo-file');
-    expect(input).toBeTruthy();
-  });
-
-  test('upload calls uploadAdPhotosMultipart', async () => {
     const user = userEvent.setup();
-    renderPage();
+    const input = screen.getByTestId('photo-file') as HTMLInputElement;
 
-    const input = (await screen.findByTestId('photo-file')) as HTMLInputElement;
-
-    const file = new File(['hello'], 'hello.png', { type: 'image/png' });
+    const file = new File(['x'], 'a.png', { type: 'image/png' });
     await user.upload(input, file);
 
-    expect(photosApiMock.uploadAdPhotosMultipart).toHaveBeenCalledTimes(1);
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+  });
 
-    // optional: ensure it was called with object arg containing adId/files/token
-    const firstArg = photosApiMock.uploadAdPhotosMultipart.mock.calls[0]?.[0];
-    expect(firstArg).toBeTruthy();
+  it('reorder changes server photos order (via fallback buttons)', async () => {
+    uploadSpy
+      .mockResolvedValueOnce({ photo: { id: 'p1', url: 'https://example.com/p1.jpg' } })
+      .mockResolvedValueOnce({ photo: { id: 'p2', url: 'https://example.com/p2.jpg' } });
+
+    render(
+      <MemoryRouter initialEntries={['/ads/123/photos']}>
+        <Routes>
+          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const user = userEvent.setup();
+    const input = screen.getByTestId('photo-file') as HTMLInputElement;
+
+    const f1 = new File(['1'], '1.png', { type: 'image/png' });
+    const f2 = new File(['2'], '2.png', { type: 'image/png' });
+
+    await user.upload(input, f1);
+    await user.upload(input, f2);
+
+    // wait until both server photos exist
+    await screen.findByTestId('server-photo-p1');
+    await screen.findByTestId('server-photo-p2');
+
+    expect(getOrderFromServerPhotos()).toEqual(['p1', 'p2']);
+
+    // move p2 up (becomes first)
+    const moveUpP2 = screen.getByTestId('move-up-p2');
+    await user.click(moveUpP2);
+
+    expect(getOrderFromServerPhotos()).toEqual(['p2', 'p1']);
   });
 });
