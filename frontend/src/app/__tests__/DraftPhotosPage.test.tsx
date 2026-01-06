@@ -1,123 +1,170 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { setupServer } from 'msw/node';
+import { rest } from 'msw';
 
 import { DraftPhotosPage } from '../../pages/DraftPhotosPage';
 
-// ---- MSW setup (minimal inline handlers) ----
-import { setupServer } from 'msw/node';
-import { http, HttpResponse } from 'msw';
+// ------------------------------
+// MSW
+// ------------------------------
 
-// Mock auth store
-vi.mock('../../store/auth.store', () => ({
-  useAuth: () => ({ user: { id: 'u1' } }),
-}));
+type Photo = {
+  id: string;
+  filePath: string;
+  position: number;
+};
 
-// Mock api helpers (photos.api)
-vi.mock('../../api/photos.api', async () => {
-  const actual = await vi.importActual<typeof import('../../api/photos.api')>(
-    '../../api/photos.api'
-  );
+let photosState: Photo[] = [
+  { id: 'p1', filePath: '/uploads/p1.jpg', position: 1 },
+  { id: 'p2', filePath: '/uploads/p2.jpg', position: 2 }
+];
 
-  return {
-    ...actual,
-    uploadAdPhotos: vi.fn(async () => ({
-      photos: [
-        { id: 'p1', filePath: '/p1.jpg', order: 1 },
-        { id: 'p2', filePath: '/p2.jpg', order: 2 },
-      ],
-    })),
-    deleteAdPhoto: vi.fn(async () => ({ ok: true })),
-    reorderAdPhotos: vi.fn(async () => ({
-      photos: [
-        { id: 'p2', filePath: '/p2.jpg', order: 1 },
-        { id: 'p1', filePath: '/p1.jpg', order: 2 },
-      ],
-    })),
-  };
-});
+// Match both relative and absolute URL forms:
+// - /api/ads/ad1
+// - http://localhost:3001/api/ads/ad1
+const reGetAd = /\/api\/ads\/[^/]+$/;
 
-// Mock http apiFetch
-vi.mock('../../http', () => ({
-  apiFetch: async () => ({
-    id: 'ad1',
-    status: 'draft',
-    userId: 'u1',
-    photos: [
-      { id: 'p1', filePath: '/p1.jpg', order: 1 },
-      { id: 'p2', filePath: '/p2.jpg', order: 2 },
-    ],
-  }),
-  ApiError: class ApiError extends Error {
-    status = 409;
-  },
-}));
+// - /api/ads/ad1/photos/reorder
+// - http://localhost:3001/api/ads/ad1/photos/reorder
+const reReorder = /\/api\/ads\/[^/]+\/photos\/reorder$/;
 
 const server = setupServer(
-  http.get('/api/ads/ad1', () =>
-    HttpResponse.json({
-      data: {
+  rest.get(reGetAd, (_req, res, ctx) => {
+    return res(
+      ctx.status(200),
+      ctx.json({
         id: 'ad1',
-        status: 'draft',
-        userId: 'u1',
-        photos: [
-          { id: 'p1', filePath: '/p1.jpg', order: 1 },
-          { id: 'p2', filePath: '/p2.jpg', order: 2 },
-        ],
-      },
-    })
-  )
+        photos: photosState
+      })
+    );
+  }),
+
+  rest.put(reReorder, async (req, res, ctx) => {
+    // Accept common payload variants
+    let ordered: string[] | null = null;
+    try {
+      const body: any = await req.json();
+      ordered = body?.orderedIds ?? body?.photoIds ?? body?.ids ?? null;
+    } catch {
+      ordered = null;
+    }
+
+    if (Array.isArray(ordered) && ordered.length) {
+      const byId = new Map(photosState.map((p) => [p.id, p] as const));
+      const next: Photo[] = ordered
+        .map((id, idx) => {
+          const p = byId.get(String(id));
+          if (!p) return null;
+          return { ...p, position: idx + 1 };
+        })
+        .filter(Boolean) as Photo[];
+
+      // Keep any missing items appended (defensive)
+      const used = new Set(next.map((p) => p.id));
+      for (const p of photosState) {
+        if (!used.has(p.id)) next.push({ ...p, position: next.length + 1 });
+      }
+
+      photosState = next;
+    }
+
+    // Small delay so we can assert optimistic UI
+    return res(ctx.delay(250), ctx.status(200), ctx.json({ ok: true }));
+  })
 );
 
-beforeAll(() => server.listen());
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
+// ------------------------------
+// Test helpers
+// ------------------------------
+
 function renderPage() {
-  return render(
-    <MemoryRouter initialEntries={['/ads/ad1/photos']}>
-      <Routes>
-        <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
-      </Routes>
-    </MemoryRouter>
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/draft/:id/photos',
+        element: <DraftPhotosPage />
+      }
+    ],
+    {
+      initialEntries: ['/draft/ad1/photos']
+    }
   );
+
+  render(<RouterProvider router={router} />);
 }
 
+function getExistingPhotoImgs(): HTMLImageElement[] {
+  // On the page there can be other images (e.g. previews of selected files).
+  // Existing photos are served from /uploads/*
+  return screen
+    .getAllByRole('img')
+    .map((n) => n as HTMLImageElement)
+    .filter((img) => (img.getAttribute('src') || '').startsWith('/uploads/'));
+}
+
+// ------------------------------
+// Tests
+// ------------------------------
+
 describe('DraftPhotosPage', () => {
-  it('renders photos and allows upload', async () => {
+  test('renders photos and allows upload', async () => {
+    photosState = [
+      { id: 'p1', filePath: '/uploads/p1.jpg', position: 1 },
+      { id: 'p2', filePath: '/uploads/p2.jpg', position: 2 }
+    ];
+
     renderPage();
 
-    expect(await screen.findByText('Draft photos')).toBeInTheDocument();
+    // Existing photos should appear
+    await screen.findByAltText('photo-1');
+    expect(screen.getByAltText('photo-2')).toBeInTheDocument();
 
-    // Existing photos
     expect(screen.getByText('#1')).toBeInTheDocument();
     expect(screen.getByText('#2')).toBeInTheDocument();
 
-    // Upload
-    const uploadBtn = screen.getByRole('button', { name: /upload/i });
-    fireEvent.click(uploadBtn);
+    // Select a file (no user-event package needed)
+    const input = screen.getByLabelText(/select images/i) as HTMLInputElement;
 
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['x'], 'x.png', { type: 'image/png' });
+    const file = new File(['hello'], 'photo.jpg', { type: 'image/jpeg' });
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
-    });
+    // Toolbar "Upload photos" button should become enabled
+    const uploadPhotosBtn = screen.getByRole('button', { name: 'Upload photos' });
+    expect(uploadPhotosBtn).toBeEnabled();
   });
 
-  it('reorders photos optimistically', async () => {
+  test('reorders photos optimistically', async () => {
+    photosState = [
+      { id: 'p1', filePath: '/uploads/p1.jpg', position: 1 },
+      { id: 'p2', filePath: '/uploads/p2.jpg', position: 2 }
+    ];
+
     renderPage();
 
-    await screen.findByText('#1');
+    // Ensure initial render is ready
+    await screen.findByAltText('photo-1');
+    expect(screen.getByAltText('photo-2')).toBeInTheDocument();
 
-    const downButtons = screen.getAllByText('↓');
-    fireEvent.click(downButtons[0]);
+    // Move second photo up
+    const moveUpButtons = screen.getAllByRole('button', { name: /move up/i });
+    expect(moveUpButtons.length).toBeGreaterThanOrEqual(2);
 
+    fireEvent.click(moveUpButtons[1]);
+
+    // Optimistic UI: your UI keeps alt/labels per slot, but swaps the photo content.
+    // So we assert by src order (/uploads/p2.jpg should become first).
     await waitFor(() => {
-      // order swapped
-      const labels = screen.getAllByText(/#/).map((n) => n.textContent);
-      expect(labels).toContain('#1');
+      const imgs = getExistingPhotoImgs();
+      expect(imgs.length).toBe(2);
+
+      expect(imgs[0].getAttribute('src')).toBe('/uploads/p2.jpg');
+      expect(imgs[1].getAttribute('src')).toBe('/uploads/p1.jpg');
     });
   });
 });
