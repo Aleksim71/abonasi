@@ -62,13 +62,6 @@ function mapAdRowToDto(r) {
   };
 }
 
-function mapAdRowWithLocationToDto(r) {
-  return {
-    ...mapAdRowToDto(r),
-    location: r.country || r.city || r.district ? { country: r.country, city: r.city, district: r.district } : undefined
-  };
-}
-
 /**
  * POST /api/ads
  * requires auth
@@ -905,38 +898,38 @@ async function deletePhotoFromDraft(req, res) {
 }
 
 /**
- * PUT /api/ads/:id/photos/reorder
+ * PATCH /api/ads/:id/photos/reorder
  * requires auth
- * body: { items: [{ photoId, sortOrder }] }
+ * body: { photoIds: string[] }
  * MVP: only owner + only draft
  */
 async function reorderPhotosInDraft(req, res) {
   const userId = req.user?.id;
   const adId = String(req.params.id || '').trim();
-  const items = req.body?.items;
+  const photoIds = req.body?.photoIds;
 
   if (!isUuid(adId)) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'ad id must be a UUID' });
   }
-  if (!Array.isArray(items) || items.length === 0) {
-    return res
-      .status(400)
-      .json({ error: 'BAD_REQUEST', message: 'items must be a non-empty array' });
+  if (!Array.isArray(photoIds) || photoIds.length === 0) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'photoIds must be a non-empty array' });
   }
 
-  for (const it of items) {
-    const photoId = String(it?.photoId || '').trim();
-    const sortOrder = Number(it?.sortOrder);
+  const normalized = Array.from(
+    new Set(
+      photoIds
+        .map((x) => (typeof x === 'string' ? x.trim() : String(x || '').trim()))
+        .filter(Boolean)
+    )
+  );
 
-    if (!isUuid(photoId)) {
-      return res
-        .status(400)
-        .json({ error: 'BAD_REQUEST', message: 'each item.photoId must be UUID' });
-    }
-    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 50) {
-      return res
-        .status(400)
-        .json({ error: 'BAD_REQUEST', message: 'each item.sortOrder must be integer 0..50' });
+  if (normalized.length !== photoIds.length) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'photoIds must be unique and non-empty' });
+  }
+
+  for (const id of normalized) {
+    if (!isUuid(id)) {
+      return res.status(400).json({ error: 'BAD_REQUEST', message: `invalid photoId: ${id}` });
     }
   }
 
@@ -950,34 +943,36 @@ async function reorderPhotosInDraft(req, res) {
     );
     if (!adCheck.rowCount) {
       await client.query('ROLLBACK');
-      return res
-        .status(409)
-        .json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
+      return res.status(409).json({ error: 'NOT_ALLOWED', message: 'only own draft ads can be edited' });
     }
 
-    const ids = items.map((x) => String(x.photoId).trim());
     const own = await client.query(
       `SELECT id FROM ad_photos WHERE ad_id = $1 AND id = ANY($2::uuid[])`,
-      [adId, ids]
+      [adId, normalized]
     );
-    if (own.rowCount !== ids.length) {
+    if (own.rowCount !== normalized.length) {
       await client.query('ROLLBACK');
       return res
         .status(400)
         .json({ error: 'BAD_REQUEST', message: 'some photoIds do not belong to this ad' });
     }
 
-    await client.query(`UPDATE ad_photos SET sort_order = sort_order + 100 WHERE ad_id = $1`, [
-      adId
-    ]);
-
-    for (const it of items) {
-      await client.query(`UPDATE ad_photos SET sort_order = $1 WHERE id = $2 AND ad_id = $3`, [
-        it.sortOrder,
-        it.photoId,
-        adId
-      ]);
-    }
+    // Persist order 1..n in one query
+    await client.query(
+      `
+      WITH input AS (
+        SELECT
+          unnest($2::uuid[]) AS photo_id,
+          generate_series(1, array_length($2::uuid[], 1)) AS sort_order
+      )
+      UPDATE ad_photos p
+      SET sort_order = input.sort_order
+      FROM input
+      WHERE p.ad_id = $1
+        AND p.id = input.photo_id
+      `,
+      [adId, normalized]
+    );
 
     await client.query('COMMIT');
 
