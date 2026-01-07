@@ -13,14 +13,23 @@ type Opts = {
  * - schedule(photoIds) queues a single request after debounce
  * - only last scheduled order wins
  * - safe to call frequently (DnD move)
+ *
+ * B2 additions:
+ * - remembers last failed order
+ * - retryNow() allows UX "Retry" button without duplicating logic in the page
  */
 export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: Opts = {}) {
   const debounceMs = Number.isFinite(opts.debounceMs) ? Number(opts.debounceMs) : 700;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inflight = 0;
+
   let lastQueued: string[] | null = null;
   let lastSavedKey: string | null = null;
+  let lastFailed: string[] | null = null;
+
+  // monotonic counter to guard against "late resolves" updating state incorrectly
+  let saveSeq = 0;
 
   function keyOf(ids: string[]) {
     return ids.join('|');
@@ -33,30 +42,52 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
     }
   }
 
+  function setSaving(v: boolean) {
+    opts.onSavingChange?.(v);
+  }
+
+  function setError(msg: string | null) {
+    opts.onError?.(msg);
+  }
+
+  async function flush(ids: string[]) {
+    const seq = ++saveSeq;
+
+    const key = keyOf(ids);
+    if (key === lastSavedKey) return;
+
+    inflight += 1;
+    setError(null);
+    setSaving(true);
+
+    try {
+      await persist(ids);
+
+      // If a newer save was started after this one, ignore this completion.
+      if (seq !== saveSeq) return;
+
+      lastSavedKey = key;
+      lastFailed = null;
+    } catch (e) {
+      if (seq !== saveSeq) return;
+
+      const msg = e instanceof Error ? e.message : String(e);
+      lastFailed = ids.slice();
+      setError(msg || 'Failed to save photo order');
+      // do NOT update lastSavedKey => retry remains possible
+    } finally {
+      inflight -= 1;
+      if (inflight <= 0) setSaving(false);
+    }
+  }
+
   async function flushQueued() {
     if (!lastQueued) return;
 
     const ids = lastQueued;
     lastQueued = null;
 
-    const key = keyOf(ids);
-    if (key === lastSavedKey) return;
-
-    inflight += 1;
-    opts.onError?.(null);
-    opts.onSavingChange?.(true);
-
-    try {
-      await persist(ids);
-      lastSavedKey = key;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      opts.onError?.(msg || 'Failed to save photo order');
-      // do NOT update lastSavedKey => next schedule can retry
-    } finally {
-      inflight -= 1;
-      if (inflight <= 0) opts.onSavingChange?.(false);
-    }
+    await flush(ids);
   }
 
   return {
@@ -74,6 +105,19 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
         timer = null;
         void flushQueued();
       }, debounceMs);
+    },
+
+    /**
+     * Retry last failed order immediately (no debounce).
+     * Returns true if retry started, false if there is nothing to retry.
+     */
+    retryNow() {
+      if (!lastFailed || lastFailed.length < 2) return false;
+
+      clearTimer();
+      // Important: run immediately, do not debounce user-initiated retry.
+      void flush(lastFailed.slice());
+      return true;
     },
 
     /** Cancel pending debounce timer (use on unmount) */

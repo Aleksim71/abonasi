@@ -9,47 +9,11 @@ vi.mock('../../store/auth.store', () => ({
 }));
 
 // --- mocks: Photos API ---
-const reorderSpy = vi.fn().mockResolvedValue({ ok: true });
+const reorderSpy = vi.fn();
 
 vi.mock('../../api/photos.api', () => ({
   reorderAdPhotos: (...args: any[]) => reorderSpy(...args),
   uploadAdPhotosMultipart: vi.fn()
-}));
-
-// --- mock order persister: real debounce via timers (deterministic in tests) ---
-vi.mock('../../pages/draftPhotos.persistOrder', () => ({
-  createDraftPhotosOrderPersister: (
-    saveFn: (photoIds: string[]) => Promise<unknown>,
-    opts: {
-      debounceMs?: number;
-      onSavingChange?: (v: boolean) => void;
-      onError?: (msg: string | null) => void;
-    }
-  ) => {
-    const debounceMs = opts?.debounceMs ?? 700;
-    let t: ReturnType<typeof setTimeout> | null = null;
-
-    return {
-      schedule(photoIds: string[]) {
-        if (t) clearTimeout(t);
-        t = setTimeout(async () => {
-          try {
-            opts?.onSavingChange?.(true);
-            opts?.onError?.(null);
-            await saveFn(photoIds);
-          } catch (e: any) {
-            opts?.onError?.(String(e?.message || e || 'save failed'));
-          } finally {
-            opts?.onSavingChange?.(false);
-          }
-        }, debounceMs);
-      },
-      cancel() {
-        if (t) clearTimeout(t);
-        t = null;
-      }
-    };
-  }
 }));
 
 // --- mock reducer/state to have deterministic server photos + MOVE_PHOTO behaviour ---
@@ -104,7 +68,7 @@ async function flushMicrotasks() {
 }
 
 beforeEach(() => {
-  reorderSpy.mockClear();
+  reorderSpy.mockReset();
   vi.useFakeTimers();
 });
 
@@ -114,15 +78,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('DraftPhotosPage - B1 persist order', () => {
+describe('DraftPhotosPage - B1/B2 persist order', () => {
   it('debounced reorder persists order (via fallback buttons)', async () => {
+    reorderSpy.mockResolvedValue({ ok: true });
+
     renderDraftPhotosPage('/draft/ad-1/photos');
 
     const moveDownP1 = screen.getByTestId('move-down-p1');
     fireEvent.click(moveDownP1);
 
     await act(async () => {
-      vi.advanceTimersByTime(800);
+      await vi.advanceTimersByTimeAsync(800);
       await flushMicrotasks();
     });
 
@@ -132,5 +98,67 @@ describe('DraftPhotosPage - B1 persist order', () => {
       photoIds: ['p2', 'p1'],
       token: 'test-token'
     });
+  });
+
+  it('B2: shows saving indicator while request is pending', async () => {
+    let resolve!: (v: unknown) => void;
+
+    reorderSpy.mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolve = res;
+        })
+    );
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    // trigger debounce -> starts request -> saving indicator must appear
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(screen.getByTestId('saving-indicator')).toBeInTheDocument();
+    expect(reorderSpy).toHaveBeenCalledTimes(1);
+
+    // resolve request -> indicator disappears
+    resolve({ ok: true });
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(screen.queryByTestId('saving-indicator')).toBeNull();
+  });
+
+  it('B2: shows error and retry triggers second save', async () => {
+    reorderSpy
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ ok: true });
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    // first attempt fails
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(reorderSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('order-save-error')).toBeInTheDocument();
+    expect(screen.getByTestId('persist-order-retry')).toBeInTheDocument();
+
+    // retry triggers immediate persist (no debounce)
+    fireEvent.click(screen.getByTestId('persist-order-retry'));
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(reorderSpy).toHaveBeenCalledTimes(2);
   });
 });
