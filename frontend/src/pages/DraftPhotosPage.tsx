@@ -81,7 +81,7 @@ export function DraftPhotosPage() {
 
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
 
-  // B1: debounced persist order
+  // B2: UX around debounced persist order
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
 
@@ -90,9 +90,7 @@ export function DraftPhotosPage() {
       async (photoIds: string[]) => {
         if (!token) throw new Error('no token');
 
-        // IMPORTANT:
-        // - PersistOrderFn expects Promise<void>
-        // - PhotosApi.reorderAdPhotos returns something => we await and DO NOT return it
+        // PersistOrderFn expects Promise<void>
         await PhotosApi.reorderAdPhotos({ adId, photoIds, token });
       },
       {
@@ -228,6 +226,8 @@ export function DraftPhotosPage() {
   }
 
   function movePhoto(fromIndex: number, toIndex: number) {
+    // optimistic UX: any new reorder hides previous error
+    setOrderSaveError(null);
     dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
   }
 
@@ -260,10 +260,28 @@ export function DraftPhotosPage() {
 
       {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
 
-      {(isSavingOrder || orderSaveError) && (
-        <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
-          {isSavingOrder ? 'Сохраняю порядок…' : null}
-          {orderSaveError ? ` Ошибка сохранения порядка: ${orderSaveError}` : null}
+      {/* B2: saving / error / retry */}
+      {isSavingOrder && (
+        <div data-testid="saving-indicator" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
+          Сохраняю порядок…
+        </div>
+      )}
+
+      {orderSaveError && !isSavingOrder && (
+        <div data-testid="order-save-error" style={{ marginBottom: 10 }}>
+          <ErrorBox title="Не удалось сохранить порядок" message={orderSaveError} />
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              data-testid="persist-order-retry"
+              onClick={() => {
+                const started = orderPersister.retryNow();
+                if (!started) setOrderSaveError(null);
+              }}
+            >
+              Retry
+            </button>
+          </div>
         </div>
       )}
 
