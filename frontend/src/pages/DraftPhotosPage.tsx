@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useReducer, useRef } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
 import { useAuth } from '../store/auth.store';
 import { ErrorBox } from '../ui/ErrorBox';
-
+import { createDraftPhotosOrderPersister } from './draftPhotos.persistOrder';
 import {
   draftPhotosReducer,
   initialDraftPhotosState,
@@ -80,6 +80,40 @@ export function DraftPhotosPage() {
   const objectUrlsRef = useRef<Map<string, string>>(new Map());
 
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
+
+  // B1: debounced persist order
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
+
+  const orderPersister = useMemo(() => {
+    return createDraftPhotosOrderPersister(
+      async (photoIds: string[]) => {
+        if (!token) throw new Error('no token');
+
+        // IMPORTANT:
+        // - PersistOrderFn expects Promise<void>
+        // - PhotosApi.reorderAdPhotos returns something => we await and DO NOT return it
+        await PhotosApi.reorderAdPhotos({ adId, photoIds, token });
+      },
+      {
+        debounceMs: 700,
+        onSavingChange: setIsSavingOrder,
+        onError: setOrderSaveError
+      }
+    );
+  }, [adId, token]);
+
+  useEffect(() => {
+    return () => orderPersister.cancel();
+  }, [orderPersister]);
+
+  // schedule persist when order changes (only server photos)
+  const orderKey = useMemo(() => state.photos.map((p) => p.id).join('|'), [state.photos]);
+
+  useEffect(() => {
+    const ids = state.photos.map((p) => p.id).filter(Boolean);
+    if (ids.length >= 2) orderPersister.schedule(ids);
+  }, [orderKey, orderPersister, state.photos]);
 
   useEffect(() => {
     const map = objectUrlsRef.current;
@@ -225,6 +259,13 @@ export function DraftPhotosPage() {
       {!token && <ErrorBox title="Нет доступа" message="Нужно войти в аккаунт, чтобы загружать фото." />}
 
       {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
+
+      {(isSavingOrder || orderSaveError) && (
+        <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
+          {isSavingOrder ? 'Сохраняю порядок…' : null}
+          {orderSaveError ? ` Ошибка сохранения порядка: ${orderSaveError}` : null}
+        </div>
+      )}
 
       <div style={{ marginBottom: 12 }}>
         <input
