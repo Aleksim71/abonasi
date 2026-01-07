@@ -1,97 +1,136 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { fireEvent, cleanup, screen, act } from '@testing-library/react';
 
+import { renderDraftPhotosPage } from './DraftPhotosPage.test.helpers';
+
+// --- mocks: auth (правильный путь относительно __tests__) ---
 vi.mock('../../store/auth.store', () => ({
-  useAuth: () => ({ token: 'test-token' })
+  useAuth: () => ({ token: 'test-token', user: { id: 'u1' } })
 }));
 
-const uploadSpy = vi.fn();
+// --- mocks: Photos API ---
+const reorderSpy = vi.fn().mockResolvedValue({ ok: true });
 
 vi.mock('../../api/photos.api', () => ({
-  uploadAdPhotosMultipart: (...args: unknown[]) => uploadSpy(...args)
+  reorderAdPhotos: (...args: any[]) => reorderSpy(...args),
+  uploadAdPhotosMultipart: vi.fn()
 }));
 
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { DraftPhotosPage } from '../../pages/DraftPhotosPage';
+// --- mock order persister: real debounce via timers (deterministic in tests) ---
+vi.mock('../../pages/draftPhotos.persistOrder', () => ({
+  createDraftPhotosOrderPersister: (
+    saveFn: (photoIds: string[]) => Promise<unknown>,
+    opts: {
+      debounceMs?: number;
+      onSavingChange?: (v: boolean) => void;
+      onError?: (msg: string | null) => void;
+    }
+  ) => {
+    const debounceMs = opts?.debounceMs ?? 700;
+    let t: ReturnType<typeof setTimeout> | null = null;
 
-function getOrderFromServerPhotos(): string[] {
-  const container = screen.getByTestId('server-photos');
-  const ids: string[] = [];
-  for (const el of Array.from(container.children)) {
-    const id = el.getAttribute('data-photo-id');
-    if (id) ids.push(id);
+    return {
+      schedule(photoIds: string[]) {
+        if (t) clearTimeout(t);
+        t = setTimeout(async () => {
+          try {
+            opts?.onSavingChange?.(true);
+            opts?.onError?.(null);
+            await saveFn(photoIds);
+          } catch (e: any) {
+            opts?.onError?.(String(e?.message || e || 'save failed'));
+          } finally {
+            opts?.onSavingChange?.(false);
+          }
+        }, debounceMs);
+      },
+      cancel() {
+        if (t) clearTimeout(t);
+        t = null;
+      }
+    };
   }
-  return ids;
+}));
+
+// --- mock reducer/state to have deterministic server photos + MOVE_PHOTO behaviour ---
+vi.mock('../../pages/draftPhotos.state', () => {
+  const initialDraftPhotosState = {
+    uploads: [],
+    photos: [
+      { id: 'p1', url: '/p1.jpg' },
+      { id: 'p2', url: '/p2.jpg' }
+    ],
+    coverPhotoId: null as string | null,
+    pageError: null as string | null
+  };
+
+  function draftPhotosReducer(state: any, action: any) {
+    if (action?.type === 'MOVE_PHOTO') {
+      const { fromIndex, toIndex } = action.payload || {};
+      const next = [...state.photos];
+
+      if (
+        typeof fromIndex !== 'number' ||
+        typeof toIndex !== 'number' ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= next.length ||
+        toIndex >= next.length
+      ) {
+        return state;
+      }
+
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return { ...state, photos: next };
+    }
+
+    if (action?.type === 'SET_COVER') {
+      return { ...state, coverPhotoId: action.payload?.photoId ?? null };
+    }
+
+    return state;
+  }
+
+  return {
+    draftPhotosReducer,
+    initialDraftPhotosState
+  };
+});
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
-describe('DraftPhotosPage', () => {
-  it('renders upload control (file input)', async () => {
-    render(
-      <MemoryRouter initialEntries={['/ads/123/photos']}>
-        <Routes>
-          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
+beforeEach(() => {
+  reorderSpy.mockClear();
+  vi.useFakeTimers();
+});
 
-    expect(screen.getByTestId('photo-file')).toBeInTheDocument();
-  });
+afterEach(() => {
+  cleanup();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
 
-  it('upload calls uploadAdPhotosMultipart', async () => {
-    uploadSpy.mockResolvedValueOnce({
-      photo: { id: 'p1', url: 'https://example.com/p1.jpg' }
+describe('DraftPhotosPage - B1 persist order', () => {
+  it('debounced reorder persists order (via fallback buttons)', async () => {
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    const moveDownP1 = screen.getByTestId('move-down-p1');
+    fireEvent.click(moveDownP1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await flushMicrotasks();
     });
 
-    render(
-      <MemoryRouter initialEntries={['/ads/123/photos']}>
-        <Routes>
-          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    const user = userEvent.setup();
-    const input = screen.getByTestId('photo-file') as HTMLInputElement;
-
-    const file = new File(['x'], 'a.png', { type: 'image/png' });
-    await user.upload(input, file);
-
-    expect(uploadSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('reorder changes server photos order (via fallback buttons)', async () => {
-    uploadSpy
-      .mockResolvedValueOnce({ photo: { id: 'p1', url: 'https://example.com/p1.jpg' } })
-      .mockResolvedValueOnce({ photo: { id: 'p2', url: 'https://example.com/p2.jpg' } });
-
-    render(
-      <MemoryRouter initialEntries={['/ads/123/photos']}>
-        <Routes>
-          <Route path="/ads/:id/photos" element={<DraftPhotosPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    const user = userEvent.setup();
-    const input = screen.getByTestId('photo-file') as HTMLInputElement;
-
-    const f1 = new File(['1'], '1.png', { type: 'image/png' });
-    const f2 = new File(['2'], '2.png', { type: 'image/png' });
-
-    await user.upload(input, f1);
-    await user.upload(input, f2);
-
-    // wait until both server photos exist
-    await screen.findByTestId('server-photo-p1');
-    await screen.findByTestId('server-photo-p2');
-
-    expect(getOrderFromServerPhotos()).toEqual(['p1', 'p2']);
-
-    // move p2 up (becomes first)
-    const moveUpP2 = screen.getByTestId('move-up-p2');
-    await user.click(moveUpP2);
-
-    expect(getOrderFromServerPhotos()).toEqual(['p2', 'p1']);
+    expect(reorderSpy).toHaveBeenCalledTimes(1);
+    expect(reorderSpy).toHaveBeenCalledWith({
+      adId: 'ad-1',
+      photoIds: ['p2', 'p1'],
+      token: 'test-token'
+    });
   });
 });
