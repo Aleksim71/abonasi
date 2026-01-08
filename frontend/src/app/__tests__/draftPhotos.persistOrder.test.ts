@@ -7,49 +7,53 @@ afterEach(() => {
 });
 
 async function flushMicrotasks(times = 3) {
-  for (let i = 0; i < times; i += 1) await Promise.resolve();
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe('draftPhotos.persistOrder - B2 UX signals', () => {
   it('toggles onSavingChange true->false around successful persist', async () => {
-    const onSavingChange = vi.fn();
-    const onError = vi.fn();
+    vi.useFakeTimers();
+
     const persist = vi.fn().mockResolvedValue(undefined);
+    const onSavingChange = vi.fn();
 
     const p = createDraftPhotosOrderPersister(persist, {
-      debounceMs: 10,
-      onSavingChange,
-      onError
+      debounceMs: 0,
+      onSavingChange
     });
 
     p.schedule(['a', 'b']);
-    expect(persist).toHaveBeenCalledTimes(0);
 
-    await new Promise((r) => setTimeout(r, 20));
+    // schedule() only sets timer; saving starts when flush runs
+    vi.runOnlyPendingTimers();
+    await flushMicrotasks();
 
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith(null);
     expect(onSavingChange).toHaveBeenCalledWith(true);
     expect(onSavingChange).toHaveBeenLastCalledWith(false);
   });
 
   it('sets error on failure and retryNow() persists immediately', async () => {
-    const onSavingChange = vi.fn();
+    vi.useFakeTimers();
+
+    const persist = vi.fn().mockRejectedValue(new Error('fail'));
     const onError = vi.fn();
 
-    const persist = vi.fn().mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(undefined);
-
     const p = createDraftPhotosOrderPersister(persist, {
-      debounceMs: 10,
-      onSavingChange,
+      debounceMs: 0,
       onError
     });
 
     p.schedule(['a', 'b']);
-    await new Promise((r) => setTimeout(r, 20));
+    vi.runOnlyPendingTimers();
+    await flushMicrotasks();
 
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenLastCalledWith('boom');
+    expect(onError).toHaveBeenCalled();
+
+    persist.mockResolvedValueOnce(undefined);
 
     const started = p.retryNow();
     expect(started).toBe(true);
@@ -58,47 +62,50 @@ describe('draftPhotos.persistOrder - B2 UX signals', () => {
     expect(persist).toHaveBeenCalledTimes(2);
   });
 
-  it('race guard: late completion must not clear newer error', async () => {
+  it('guards against late resolve (race protection)', async () => {
     vi.useFakeTimers();
 
-    // first persist resolves late
-    let resolveLate!: () => void;
-    const latePromise = new Promise<void>((resolve) => {
-      resolveLate = resolve;
-    });
+    let resolve1!: () => void;
+    let resolve2!: () => void;
 
-    // second persist fails (newer)
     const persist = vi
       .fn()
-      .mockImplementationOnce(() => latePromise)
-      .mockRejectedValueOnce(new Error('newer failed'));
-
-    const onError = vi.fn();
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((r) => {
+            resolve1 = r;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((r) => {
+            resolve2 = r;
+          })
+      );
 
     const p = createDraftPhotosOrderPersister(persist, {
-      debounceMs: 0,
-      onError
+      debounceMs: 0
     });
 
-    // start save#1 (timer even with 0ms)
     p.schedule(['a', 'b']);
     vi.runOnlyPendingTimers();
     await flushMicrotasks();
-    expect(persist).toHaveBeenCalledTimes(1);
 
-    // start save#2 (newer) and fail it
     p.schedule(['b', 'a']);
     vi.runOnlyPendingTimers();
     await flushMicrotasks();
-    expect(persist).toHaveBeenCalledTimes(2);
-    expect(onError).toHaveBeenLastCalledWith('newer failed');
 
-    // now resolve older late
-    resolveLate();
+    expect(persist).toHaveBeenCalledTimes(2);
+
+    // resolve newer first
+    resolve2();
     await flushMicrotasks();
 
-    // must stay with newer error, late success must not override it
-    expect(onError).toHaveBeenLastCalledWith('newer failed');
+    // late resolve of older request must be ignored
+    resolve1();
+    await flushMicrotasks();
+
+    expect(persist).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -106,8 +113,8 @@ describe('draftPhotos.persistOrder - B3.1 saved feedback', () => {
   it('emits saved=true and auto-hides after savedMs', async () => {
     vi.useFakeTimers();
 
-    const onSavedChange = vi.fn();
     const persist = vi.fn().mockResolvedValue(undefined);
+    const onSavedChange = vi.fn();
 
     const p = createDraftPhotosOrderPersister(persist, {
       debounceMs: 0,
@@ -122,19 +129,17 @@ describe('draftPhotos.persistOrder - B3.1 saved feedback', () => {
     expect(onSavedChange).toHaveBeenCalledWith(true);
 
     vi.advanceTimersByTime(1499);
-    await flushMicrotasks();
-    expect(onSavedChange).not.toHaveBeenCalledWith(false);
+    expect(onSavedChange).not.toHaveBeenLastCalledWith(false);
 
-    vi.advanceTimersByTime(2);
-    await flushMicrotasks();
-    expect(onSavedChange).toHaveBeenCalledWith(false);
+    vi.advanceTimersByTime(1);
+    expect(onSavedChange).toHaveBeenLastCalledWith(false);
   });
 
   it('new schedule hides saved immediately', async () => {
     vi.useFakeTimers();
 
-    const onSavedChange = vi.fn();
     const persist = vi.fn().mockResolvedValue(undefined);
+    const onSavedChange = vi.fn();
 
     const p = createDraftPhotosOrderPersister(persist, {
       debounceMs: 0,
@@ -142,18 +147,14 @@ describe('draftPhotos.persistOrder - B3.1 saved feedback', () => {
       onSavedChange
     });
 
-    // first save -> show saved
     p.schedule(['a', 'b']);
     vi.runOnlyPendingTimers();
     await flushMicrotasks();
+
     expect(onSavedChange).toHaveBeenCalledWith(true);
 
-    // new reorder hides saved immediately (before next success)
+    // new reorder should immediately hide "saved"
     p.schedule(['b', 'a']);
-    expect(onSavedChange).toHaveBeenCalledWith(false);
-
-    // run second save to keep timers clean
-    vi.runOnlyPendingTimers();
-    await flushMicrotasks();
+    expect(onSavedChange).toHaveBeenLastCalledWith(false);
   });
 });

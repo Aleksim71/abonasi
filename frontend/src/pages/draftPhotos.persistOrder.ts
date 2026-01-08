@@ -7,29 +7,30 @@ type Opts = {
   onSavingChange?: (isSaving: boolean) => void;
   onError?: (message: string | null) => void;
 
-  // B3.1: transient "Saved" feedback
+  // B3.1
   onSavedChange?: (isSaved: boolean) => void;
   savedMs?: number;
+
+  // B3.2
+  maxAutoRetries?: number;   // default: 2
+  retryDelaysMs?: number[]; // default: [1000, 3000]
 };
 
-/**
- * Debounced order persister:
- * - schedule(photoIds) queues a single request after debounce
- * - only last scheduled order wins
- * - safe to call frequently (DnD move)
- *
- * B2 additions:
- * - remembers last failed order
- * - retryNow() allows UX "Retry" button without duplicating logic in the page
- * - guards against late resolves (older completions do not override newer state)
- *
- * B3.1 additions:
- * - emits transient "Saved" signal after successful persist (auto-hide)
- * - clears "Saved" when a new reorder happens (so it doesn't "stick")
- */
-export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: Opts = {}) {
+export function createDraftPhotosOrderPersister(
+  persist: PersistOrderFn,
+  opts: Opts = {}
+) {
   const debounceMs = Number.isFinite(opts.debounceMs) ? Number(opts.debounceMs) : 700;
   const savedMs = Number.isFinite(opts.savedMs) ? Number(opts.savedMs) : 1500;
+
+  const maxAutoRetries = Number.isFinite(opts.maxAutoRetries)
+    ? Number(opts.maxAutoRetries)
+    : 2;
+
+  const retryDelaysMs =
+    Array.isArray(opts.retryDelaysMs) && opts.retryDelaysMs.length > 0
+      ? opts.retryDelaysMs
+      : [1000, 3000];
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inflight = 0;
@@ -38,12 +39,16 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
   let lastSavedKey: string | null = null;
   let lastFailed: string[] | null = null;
 
-  // monotonic counter to guard against "late resolves" updating state incorrectly
+  // race guard
   let saveSeq = 0;
 
-  // B3.1: transient "Saved" flag + timer
+  // B3.1: Saved feedback
   let isSaved = false;
   let savedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // B3.2: auto-retry state
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryCount = 0;
 
   function keyOf(ids: string[]) {
     return ids.join('|');
@@ -91,6 +96,29 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
     }, savedMs);
   }
 
+  function clearAutoRetry() {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    retryCount = 0;
+  }
+
+  function scheduleAutoRetry(ids: string[]) {
+    if (retryCount >= maxAutoRetries) return;
+
+    const delay =
+      retryDelaysMs[retryCount] ??
+      retryDelaysMs[Math.max(0, retryDelaysMs.length - 1)];
+
+    retryCount += 1;
+
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void flush(ids);
+    }, delay);
+  }
+
   async function flush(ids: string[]) {
     const seq = ++saveSeq;
 
@@ -99,34 +127,28 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
 
     inflight += 1;
 
-    // B3.1: while saving a new order, hide "Saved"
     clearSaved();
-
     setError(null);
     setSaving(true);
 
     try {
       await persist(ids);
 
-      // If a newer save was started after this one, ignore this completion.
       if (seq !== saveSeq) return;
 
       lastSavedKey = key;
       lastFailed = null;
-
-      // B3.1: success -> show "Saved" briefly
+      clearAutoRetry();
       setSaved();
     } catch (e) {
-      // If a newer save was started after this one, ignore this completion.
       if (seq !== saveSeq) return;
 
       const msg = e instanceof Error ? e.message : String(e);
       lastFailed = ids.slice();
       setError(msg || 'Failed to save photo order');
-      // do NOT update lastSavedKey => retry remains possible
-
-      // B3.1: on error, keep "Saved" hidden
       clearSaved();
+
+      scheduleAutoRetry(ids);
     } finally {
       inflight -= 1;
       if (inflight <= 0) setSaving(false);
@@ -143,15 +165,11 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
   }
 
   return {
-    /**
-     * Queue save. If order changes again within debounce window,
-     * only the last order is sent.
-     */
     schedule(photoIds: string[]) {
       if (!Array.isArray(photoIds) || photoIds.length < 2) return;
 
-      // B3.1: new reorder => hide "Saved" immediately
       clearSaved();
+      clearAutoRetry();
 
       lastQueued = photoIds.slice();
       clearTimer();
@@ -162,25 +180,21 @@ export function createDraftPhotosOrderPersister(persist: PersistOrderFn, opts: O
       }, debounceMs);
     },
 
-    /**
-     * Retry last failed order immediately (no debounce).
-     * Returns true if retry started, false if there is nothing to retry.
-     */
     retryNow() {
       if (!lastFailed || lastFailed.length < 2) return false;
 
-      // B3.1: user tries again => hide "Saved"
       clearSaved();
-
+      clearAutoRetry();
       clearTimer();
+
       void flush(lastFailed.slice());
       return true;
     },
 
-    /** Cancel pending debounce timer (use on unmount) */
     cancel() {
       clearTimer();
       clearSaved();
+      clearAutoRetry();
       lastQueued = null;
     }
   };
