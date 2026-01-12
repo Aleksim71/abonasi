@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+// frontend/src/pages/DraftPhotosPage.tsx
+import React, { useEffect, useMemo, useReducer, useRef, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
@@ -85,6 +86,48 @@ export function DraftPhotosPage() {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
 
+  // B3.3: offline-aware UI
+  const [waitingForOnline, setWaitingForOnline] = useState(false);
+
+  // B4.1: compact "Saved ✓" indicator (happy-path)
+  const [showSaved, setShowSaved] = useState(false);
+  const savedTimerRef = useRef<number | null>(null);
+
+  const waitingForOnlineRef = useRef(false);
+  useEffect(() => {
+    waitingForOnlineRef.current = waitingForOnline;
+  }, [waitingForOnline]);
+
+  const clearSavedTimer = useCallback(() => {
+    if (savedTimerRef.current !== null) {
+      window.clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
+  }, []);
+
+  const hideSavedIndicator = useCallback(() => {
+    clearSavedTimer();
+    setShowSaved(false);
+  }, [clearSavedTimer]);
+
+  const showSavedIndicator = useCallback(() => {
+    // B4.1: do not conflict with offline banner (priority)
+    if (waitingForOnlineRef.current) return;
+
+    clearSavedTimer();
+    setShowSaved(true);
+    savedTimerRef.current = window.setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 1500);
+  }, [clearSavedTimer]);
+
+  useEffect(() => {
+    return () => {
+      clearSavedTimer();
+    };
+  }, [clearSavedTimer]);
+
   const orderPersister = useMemo(() => {
     return createDraftPhotosOrderPersister(
       async (photoIds: string[]) => {
@@ -95,11 +138,38 @@ export function DraftPhotosPage() {
       },
       {
         debounceMs: 700,
-        onSavingChange: setIsSavingOrder,
-        onError: setOrderSaveError
+
+        // If a new save starts, hide "Saved ✓" (calm priority)
+        onSavingChange: (saving) => {
+          setIsSavingOrder(saving);
+          if (saving) hideSavedIndicator();
+        },
+
+        // If error appears, hide "Saved ✓"
+        onError: (msg) => {
+          setOrderSaveError(msg);
+          if (msg) hideSavedIndicator();
+        },
+
+        // B4.1 event from persister (after success + race-guard)
+        onSaved: () => {
+          showSavedIndicator();
+        },
+
+        // B3.3: retry state for calm offline UX
+        onRetryStateChange: (s) => {
+          const isWaiting = s.kind === 'waitingForOnline';
+          setWaitingForOnline(isWaiting);
+
+          // When offline-waiting, hide the "error saving" UI.
+          if (isWaiting) setOrderSaveError(null);
+
+          // Offline banner has priority -> hide "Saved ✓"
+          if (isWaiting) hideSavedIndicator();
+        }
       }
     );
-  }, [adId, token]);
+  }, [adId, token, hideSavedIndicator, showSavedIndicator]);
 
   useEffect(() => {
     return () => orderPersister.cancel();
@@ -226,8 +296,13 @@ export function DraftPhotosPage() {
   }
 
   function movePhoto(fromIndex: number, toIndex: number) {
+    // B4.1: any new reorder hides Saved immediately
+    hideSavedIndicator();
+
     // optimistic UX: any new reorder hides previous error
     setOrderSaveError(null);
+    // also clear calm offline banner on new reorder attempt
+    setWaitingForOnline(false);
     dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
   }
 
@@ -260,14 +335,29 @@ export function DraftPhotosPage() {
 
       {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
 
+      {/* B3.3: calm offline message has priority over saving */}
+      {waitingForOnline && (
+        <div data-testid="waiting-for-online" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
+          Нет сети — сохраним при появлении соединения.
+        </div>
+      )}
+
+      {/* B4.1: Saved ✓ (priority: only when no higher-priority status is shown) */}
+      {showSaved && !waitingForOnline && !isSavingOrder && !orderSaveError && (
+        <div data-testid="order-saved" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
+          ✓ Saved
+        </div>
+      )}
+
       {/* B2: saving / error / retry */}
-      {isSavingOrder && (
+      {isSavingOrder && !waitingForOnline && (
         <div data-testid="saving-indicator" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
           Сохраняю порядок…
         </div>
       )}
 
-      {orderSaveError && !isSavingOrder && (
+      {/* When waitingForOnline, hide error+retry completely (polish) */}
+      {orderSaveError && !isSavingOrder && !waitingForOnline && (
         <div data-testid="order-save-error" style={{ marginBottom: 10 }}>
           <ErrorBox title="Не удалось сохранить порядок" message={orderSaveError} />
           <div style={{ marginTop: 8 }}>

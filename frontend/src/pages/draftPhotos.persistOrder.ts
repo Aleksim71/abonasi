@@ -19,6 +19,9 @@ export type DraftPhotosOrderPersisterOptions = {
   savedMs?: number;
   onSavedChange?: (saved: boolean) => void;
 
+  // B4.1 "Saved ✓" event (happy-path)
+  onSaved?: () => void;
+
   // B3.2 auto retry/backoff
   maxAutoRetries?: number; // default 2
   retryDelaysMs?: number[]; // default [1000, 3000]
@@ -67,6 +70,10 @@ function pickDelayMs(attemptIndex0: number, retryDelaysMs: number[]): number {
  * - B3.1: "Saved" for savedMs
  * - B3.2: auto-retry with backoff; canceled on new schedule() and manual retryNow()
  * - B3.3: if offline -> waitingForOnline; resume on 'online'
+ *
+ * UX polish (added):
+ * - if failure happens while OFFLINE -> do NOT emit onError(msg); keep UI calm
+ *   and switch to waitingForOnline state (resume on online)
  */
 export function createDraftPhotosOrderPersister(
   persistOrder: (ids: string[]) => Promise<void>,
@@ -158,7 +165,7 @@ export function createDraftPhotosOrderPersister(
       emitRetryState({
         kind: 'failed',
         attempt: autoRetryUsed,
-        error: new Error('auto-retries exhausted'),
+        error: new Error('auto-retries exhausted')
       });
       return;
     }
@@ -207,6 +214,11 @@ export function createDraftPhotosOrderPersister(
         cancelAutoRetry();
 
         emitRetryState({ kind: 'idle' });
+
+        // ✅ B4.1 event (after race-guard, only latest wins)
+        options.onSaved?.();
+
+        // B3.1 boolean feedback (kept as-is)
         showSaved();
       },
       (err) => {
@@ -215,7 +227,13 @@ export function createDraftPhotosOrderPersister(
         setSaving(false);
 
         const msg = errToMessage(err);
-        options.onError?.(msg);
+
+        // --- UX polish: if offline -> do not show "error saving" ---
+        if (!isOnline()) {
+          options.onError?.(null);
+        } else {
+          options.onError?.(msg);
+        }
 
         lastFailed = ids;
         lastFailedSeq = seq;
