@@ -1,3 +1,4 @@
+// frontend/src/app/__tests__/DraftPhotosPage.test.tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, cleanup, screen, act } from '@testing-library/react';
 
@@ -78,6 +79,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function setNavigatorOnline(value: boolean) {
+  Object.defineProperty(window.navigator, 'onLine', {
+    value,
+    configurable: true
+  });
+}
+
 describe('DraftPhotosPage - B1/B2 persist order', () => {
   it('debounced reorder persists order (via fallback buttons)', async () => {
     reorderSpy.mockResolvedValue({ ok: true });
@@ -121,6 +129,7 @@ describe('DraftPhotosPage - B1/B2 persist order', () => {
     });
 
     expect(screen.getByTestId('saving-indicator')).toBeInTheDocument();
+    expect(screen.queryByTestId('order-saved')).toBeNull();
     expect(reorderSpy).toHaveBeenCalledTimes(1);
 
     // resolve request -> indicator disappears
@@ -134,9 +143,7 @@ describe('DraftPhotosPage - B1/B2 persist order', () => {
   });
 
   it('B2: shows error and retry triggers second save', async () => {
-    reorderSpy
-      .mockRejectedValueOnce(new Error('network'))
-      .mockResolvedValueOnce({ ok: true });
+    reorderSpy.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce({ ok: true });
 
     renderDraftPhotosPage('/draft/ad-1/photos');
 
@@ -150,6 +157,7 @@ describe('DraftPhotosPage - B1/B2 persist order', () => {
 
     expect(reorderSpy).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('order-save-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('order-saved')).toBeNull();
     expect(screen.getByTestId('persist-order-retry')).toBeInTheDocument();
 
     // retry triggers immediate persist (no debounce)
@@ -160,5 +168,109 @@ describe('DraftPhotosPage - B1/B2 persist order', () => {
     });
 
     expect(reorderSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('B4.1: shows Saved after successful persist and hides automatically; resets on new reorder', async () => {
+    reorderSpy.mockResolvedValue({ ok: true });
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    // reorder 1
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(screen.getByTestId('order-saved')).toBeInTheDocument();
+
+    // auto-hide after 1500ms
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+      await flushMicrotasks();
+    });
+
+    expect(screen.queryByTestId('order-saved')).toBeNull();
+
+    // reorder 2 -> should stay hidden immediately (reset)
+    fireEvent.click(screen.getByTestId('move-up-p1'));
+    expect(screen.queryByTestId('order-saved')).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    // Saved should show again after second success
+    expect(screen.getByTestId('order-saved')).toBeInTheDocument();
+  });
+
+  it('B4.2: does not show Saved while waitingForOnline (offline has priority)', async () => {
+    // simulate offline at the moment of failure
+    setNavigatorOnline(false);
+
+    reorderSpy.mockRejectedValueOnce(new Error('offline'));
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(screen.getByTestId('waiting-for-online')).toBeInTheDocument();
+    expect(screen.queryByTestId('order-saved')).toBeNull();
+
+    // restore online for subsequent tests safety
+    setNavigatorOnline(true);
+  });
+
+  it('B4.2: does not show Saved while saving (saving has priority)', async () => {
+    let resolve!: (v: unknown) => void;
+
+    reorderSpy.mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolve = res;
+        })
+    );
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(screen.getByTestId('saving-indicator')).toBeInTheDocument();
+    expect(screen.queryByTestId('order-saved')).toBeNull();
+
+    // complete save — Saved may appear afterwards; we don't assert it here
+    resolve({ ok: true });
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  });
+
+  it('B4.2: does not show Saved when error is shown (error has priority)', async () => {
+    reorderSpy.mockRejectedValueOnce(new Error('network'));
+
+    renderDraftPhotosPage('/draft/ad-1/photos');
+
+    fireEvent.click(screen.getByTestId('move-down-p1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+      await flushMicrotasks();
+    });
+
+    expect(screen.getByTestId('order-save-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('order-saved')).toBeNull();
   });
 });
