@@ -89,14 +89,26 @@ export function DraftPhotosPage() {
   // B3.3: offline-aware UI
   const [waitingForOnline, setWaitingForOnline] = useState(false);
 
-  // B4.1: compact "Saved ✓" indicator (happy-path)
+  // B4: compact "Saved ✓" indicator
   const [showSaved, setShowSaved] = useState(false);
   const savedTimerRef = useRef<number | null>(null);
 
+  // B4.2: strict priority refs to avoid "Saved" popping later
   const waitingForOnlineRef = useRef(false);
+  const isSavingOrderRef = useRef(false);
+  const orderSaveErrorRef = useRef<string | null>(null);
+
   useEffect(() => {
     waitingForOnlineRef.current = waitingForOnline;
   }, [waitingForOnline]);
+
+  useEffect(() => {
+    isSavingOrderRef.current = isSavingOrder;
+  }, [isSavingOrder]);
+
+  useEffect(() => {
+    orderSaveErrorRef.current = orderSaveError;
+  }, [orderSaveError]);
 
   const clearSavedTimer = useCallback(() => {
     if (savedTimerRef.current !== null) {
@@ -110,9 +122,17 @@ export function DraftPhotosPage() {
     setShowSaved(false);
   }, [clearSavedTimer]);
 
+  const canShowSavedNow = useCallback(() => {
+    // priority: waitingForOnline > saving > error > saved
+    if (waitingForOnlineRef.current) return false;
+    if (isSavingOrderRef.current) return false;
+    if (orderSaveErrorRef.current) return false; // ✅ lint-friendly (no Boolean())
+    return true;
+  }, []);
+
   const showSavedIndicator = useCallback(() => {
-    // B4.1: do not conflict with offline banner (priority)
-    if (waitingForOnlineRef.current) return;
+    // B4.2: strict priority — if we can't show now, do NOT schedule it later
+    if (!canShowSavedNow()) return;
 
     clearSavedTimer();
     setShowSaved(true);
@@ -120,7 +140,7 @@ export function DraftPhotosPage() {
       setShowSaved(false);
       savedTimerRef.current = null;
     }, 1500);
-  }, [clearSavedTimer]);
+  }, [canShowSavedNow, clearSavedTimer]);
 
   useEffect(() => {
     return () => {
@@ -151,7 +171,7 @@ export function DraftPhotosPage() {
           if (msg) hideSavedIndicator();
         },
 
-        // B4.1 event from persister (after success + race-guard)
+        // B4: event from persister (after success + race-guard)
         onSaved: () => {
           showSavedIndicator();
         },
@@ -296,7 +316,7 @@ export function DraftPhotosPage() {
   }
 
   function movePhoto(fromIndex: number, toIndex: number) {
-    // B4.1: any new reorder hides Saved immediately
+    // B4: any new reorder hides Saved immediately
     hideSavedIndicator();
 
     // optimistic UX: any new reorder hides previous error
@@ -342,7 +362,7 @@ export function DraftPhotosPage() {
         </div>
       )}
 
-      {/* B4.1: Saved ✓ (priority: only when no higher-priority status is shown) */}
+      {/* B4: Saved ✓ (priority: only when no higher-priority status is shown) */}
       {showSaved && !waitingForOnline && !isSavingOrder && !orderSaveError && (
         <div data-testid="order-saved" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
           ✓ Saved
