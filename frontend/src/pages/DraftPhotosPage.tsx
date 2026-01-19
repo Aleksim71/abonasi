@@ -6,6 +6,7 @@ import * as PhotosApi from '../api/photos.api';
 import { useAuth } from '../store/auth.store';
 import { ErrorBox } from '../ui/ErrorBox';
 import { createDraftPhotosOrderPersister } from './draftPhotos.persistOrder';
+import './draftPhotos.reorderFeedback.css';
 import {
   draftPhotosReducer,
   initialDraftPhotosState,
@@ -92,6 +93,37 @@ export function DraftPhotosPage() {
   // B4: compact "Saved ✓" indicator
   const [showSaved, setShowSaved] = useState(false);
   const savedTimerRef = useRef<number | null>(null);
+
+  // B6: reorder micro-feedback (native drag'n'drop)
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const [settleIndex, setSettleIndex] = useState<number | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
+
+  const clearSettleTimer = useCallback(() => {
+    if (settleTimerRef.current !== null) {
+      window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+  }, []);
+
+  const triggerSettle = useCallback(
+    (idx: number | null) => {
+      clearSettleTimer();
+      setSettleIndex(idx);
+      if (idx === null) return;
+
+      settleTimerRef.current = window.setTimeout(() => {
+        setSettleIndex(null);
+        settleTimerRef.current = null;
+      }, 160);
+    },
+    [clearSettleTimer]
+  );
+
+  useEffect(() => {
+    return () => clearSettleTimer();
+  }, [clearSettleTimer]);
 
   // B4.2: strict priority refs to avoid "Saved" popping later
   const waitingForOnlineRef = useRef(false);
@@ -328,19 +360,59 @@ export function DraftPhotosPage() {
 
   // HTML5 DnD (optional in tests; kept for real UX)
   function onDragStart(e: React.DragEvent<HTMLDivElement>, fromIndex: number) {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(fromIndex));
+    // B6: start micro-feedback
+    setDraggingIndex(fromIndex);
+    setDropTargetIndex(fromIndex);
+
+    // New reorder should immediately clear old UI states
+    hideSavedIndicator();
+    setOrderSaveError(null);
+    setWaitingForOnline(false);
+
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(fromIndex));
+    } catch {
+      // ignore
+    }
   }
+
   function onDragOver(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+
+    // B6: update drop target (closest card)
+    const el = (e.target as HTMLElement | null)?.closest?.('[data-dp-index]') as HTMLElement | null;
+    const raw = el?.dataset?.dpIndex ?? '';
+    const idx = Number(raw);
+
+    if (Number.isFinite(idx) && idx >= 0) {
+      setDropTargetIndex(idx);
+    }
   }
+
   function onDrop(e: React.DragEvent<HTMLDivElement>, toIndex: number) {
     e.preventDefault();
     const raw = e.dataTransfer.getData('text/plain');
     const fromIndex = Number(raw);
     if (!Number.isFinite(fromIndex)) return;
+
+    // settle feedback on target
+    triggerSettle(toIndex);
+
     movePhoto(fromIndex, toIndex);
+
+    // end drag state
+    setDraggingIndex(null);
+    setDropTargetIndex(null);
+  }
+
+  function onDragEnd() {
+    // if drag ends without drop, still clear states
+    triggerSettle(dropTargetIndex);
+
+    setDraggingIndex(null);
+    setDropTargetIndex(null);
   }
 
   if (!adId) {
@@ -483,15 +555,27 @@ export function DraftPhotosPage() {
             {state.photos.map((p, idx) => {
               const isCover = state.coverPhotoId === p.id;
 
+              const classes = [
+                'dp-item',
+                draggingIndex === idx ? 'is-dragging' : '',
+                dropTargetIndex === idx && draggingIndex !== null && draggingIndex !== idx ? 'is-drop-target' : '',
+                settleIndex === idx ? 'is-settling' : ''
+              ]
+                .filter(Boolean)
+                .join(' ');
+
               return (
                 <div
                   key={p.id}
                   data-testid={`server-photo-${p.id}`}
                   data-photo-id={p.id}
+                  data-dp-index={idx}
                   draggable
                   onDragStart={(e) => onDragStart(e, idx)}
                   onDragOver={onDragOver}
                   onDrop={(e) => onDrop(e, idx)}
+                  onDragEnd={onDragEnd}
+                  className={classes}
                   style={{
                     width: 160,
                     borderRadius: 10,

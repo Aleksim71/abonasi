@@ -1,0 +1,47 @@
+/* =========================================================
+   B6 — reorder micro-feedback (native drag'n'drop)
+   - calm lift on dragging item
+   - subtle drop target highlight
+   - settle animation after drop
+   - respects prefers-reduced-motion
+   ========================================================= */
+
+.dp-item {
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out, outline-color 120ms ease-out;
+  will-change: transform;
+}
+
+.dp-item.is-dragging {
+  cursor: grabbing;
+  transform: scale(1.02);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+.dp-item.is-drop-target {
+  outline: 2px solid rgba(255, 215, 0, 0.6);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+.dp-item.is-settling {
+  animation: dp-settle 140ms ease-out;
+}
+
+@keyframes dp-settle {
+  0% {
+    transform: scale(1.01);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-item {
+    transition: none;
+  }
+  .dp-item.is-settling {
+    animation: none;
+  }
+}
