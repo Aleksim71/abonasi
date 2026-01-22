@@ -1,5 +1,5 @@
 // frontend/src/pages/DraftPhotosPage.tsx
-import React, { useEffect, useMemo, useReducer, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
@@ -7,6 +7,8 @@ import { useAuth } from '../store/auth.store';
 import { ErrorBox } from '../ui/ErrorBox';
 import { createDraftPhotosOrderPersister } from './draftPhotos.persistOrder';
 import './draftPhotos.reorderFeedback.css';
+import './draftPhotos.a11y.css';
+import './draftPhotos.mobileReorder.css';
 import {
   draftPhotosReducer,
   initialDraftPhotosState,
@@ -70,6 +72,24 @@ function extractFirstPhotoFromResponse(res: unknown): unknown {
   return undefined;
 }
 
+function getClosestDpIndex(target: EventTarget | null): number | null {
+  const el = (target as HTMLElement | null)?.closest?.('[data-dp-index]') as HTMLElement | null;
+  const raw = el?.dataset?.dpIndex ?? '';
+  const idx = Number(raw);
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function getDpIndexFromPoint(clientX: number, clientY: number): number | null {
+  // Vitest/jsdom tests typically stub document.elementFromPoint to support this logic.
+  const el = document.elementFromPoint?.(clientX, clientY) as HTMLElement | null;
+  if (!el) return null;
+
+  const host = el.closest?.('[data-dp-index]') as HTMLElement | null;
+  const raw = host?.dataset?.dpIndex ?? '';
+  const idx = Number(raw);
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
 export function DraftPhotosPage() {
   const { id } = useParams();
   const adId = String(id ?? '').trim();
@@ -80,7 +100,6 @@ export function DraftPhotosPage() {
   const [state, dispatch] = useReducer(draftPhotosReducer, initialDraftPhotosState);
 
   const objectUrlsRef = useRef<Map<string, string>>(new Map());
-
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
 
   // B2: UX around debounced persist order
@@ -97,8 +116,13 @@ export function DraftPhotosPage() {
   // B6: reorder micro-feedback (native drag'n'drop)
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const dropTargetIndexRef = useRef<number | null>(null);
   const [settleIndex, setSettleIndex] = useState<number | null>(null);
   const settleTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    dropTargetIndexRef.current = dropTargetIndex;
+  }, [dropTargetIndex]);
 
   const clearSettleTimer = useCallback(() => {
     if (settleTimerRef.current !== null) {
@@ -158,7 +182,7 @@ export function DraftPhotosPage() {
     // priority: waitingForOnline > saving > error > saved
     if (waitingForOnlineRef.current) return false;
     if (isSavingOrderRef.current) return false;
-    if (orderSaveErrorRef.current) return false; // ✅ lint-friendly (no Boolean())
+    if (orderSaveErrorRef.current) return false;
     return true;
   }, []);
 
@@ -184,39 +208,30 @@ export function DraftPhotosPage() {
     return createDraftPhotosOrderPersister(
       async (photoIds: string[]) => {
         if (!token) throw new Error('no token');
-
-        // PersistOrderFn expects Promise<void>
         await PhotosApi.reorderAdPhotos({ adId, photoIds, token });
       },
       {
         debounceMs: 700,
 
-        // If a new save starts, hide "Saved ✓" (calm priority)
         onSavingChange: (saving) => {
           setIsSavingOrder(saving);
           if (saving) hideSavedIndicator();
         },
 
-        // If error appears, hide "Saved ✓"
         onError: (msg) => {
           setOrderSaveError(msg);
           if (msg) hideSavedIndicator();
         },
 
-        // B4: event from persister (after success + race-guard)
         onSaved: () => {
           showSavedIndicator();
         },
 
-        // B3.3: retry state for calm offline UX
         onRetryStateChange: (s) => {
           const isWaiting = s.kind === 'waitingForOnline';
           setWaitingForOnline(isWaiting);
 
-          // When offline-waiting, hide the "error saving" UI.
           if (isWaiting) setOrderSaveError(null);
-
-          // Offline banner has priority -> hide "Saved ✓"
           if (isWaiting) hideSavedIndicator();
         }
       }
@@ -249,82 +264,87 @@ export function DraftPhotosPage() {
     };
   }, []);
 
-  async function uploadOne(localId: string, file: File) {
-    if (!canUpload || !token) return;
+  const uploadOne = useCallback(
+    async (localId: string, file: File) => {
+      if (!canUpload || !token) return;
 
-    dispatch({ type: 'START_UPLOAD', payload: { localId } });
+      dispatch({ type: 'START_UPLOAD', payload: { localId } });
 
-    try {
-      const payload: Parameters<typeof PhotosApi.uploadAdPhotosMultipart>[0] & {
-        onUploadProgress?: (evt: unknown) => void;
-      } = {
-        adId,
-        files: [file],
-        token,
-        onUploadProgress: (evt: unknown) => {
-          if (typeof evt === 'number') {
-            dispatch({ type: 'PROGRESS', payload: { localId, progress: clampPercent(evt) } });
-            return;
+      try {
+        const payload: Parameters<typeof PhotosApi.uploadAdPhotosMultipart>[0] & {
+          onUploadProgress?: (evt: unknown) => void;
+        } = {
+          adId,
+          files: [file],
+          token,
+          onUploadProgress: (evt: unknown) => {
+            if (typeof evt === 'number') {
+              dispatch({ type: 'PROGRESS', payload: { localId, progress: clampPercent(evt) } });
+              return;
+            }
+
+            if (isRecord(evt)) {
+              const percent =
+                typeof evt.percent === 'number'
+                  ? evt.percent
+                  : typeof evt.progress === 'number'
+                    ? evt.progress
+                    : typeof evt.loaded === 'number' && typeof evt.total === 'number' && evt.total > 0
+                      ? (evt.loaded / evt.total) * 100
+                      : 0;
+
+              dispatch({ type: 'PROGRESS', payload: { localId, progress: clampPercent(percent) } });
+            }
           }
+        };
 
-          if (isRecord(evt)) {
-            const percent =
-              typeof evt.percent === 'number'
-                ? evt.percent
-                : typeof evt.progress === 'number'
-                  ? evt.progress
-                  : typeof evt.loaded === 'number' && typeof evt.total === 'number' && evt.total > 0
-                    ? (evt.loaded / evt.total) * 100
-                    : 0;
+        const res = await PhotosApi.uploadAdPhotosMultipart(payload);
+        const candidate = extractFirstPhotoFromResponse(res);
 
-            dispatch({ type: 'PROGRESS', payload: { localId, progress: clampPercent(percent) } });
-          }
+        const serverPhoto: ServerPhoto = {
+          id: getPhotoId(candidate),
+          url: getPhotoSrc(candidate)
+        };
+
+        if (!serverPhoto.id || !serverPhoto.url) {
+          throw new Error('Upload succeeded but server returned an unexpected photo payload');
         }
-      };
 
-      const res = await PhotosApi.uploadAdPhotosMultipart(payload);
-      const candidate = extractFirstPhotoFromResponse(res);
-
-      const serverPhoto: ServerPhoto = {
-        id: getPhotoId(candidate),
-        url: getPhotoSrc(candidate)
-      };
-
-      if (!serverPhoto.id || !serverPhoto.url) {
-        throw new Error('Upload succeeded but server returned an unexpected photo payload');
+        dispatch({ type: 'UPLOAD_SUCCESS', payload: { localId, serverPhoto } });
+      } catch (e) {
+        dispatch({ type: 'UPLOAD_ERROR', payload: { localId, message: toUserMessage(e) } });
       }
+    },
+    [adId, canUpload, token]
+  );
 
-      dispatch({ type: 'UPLOAD_SUCCESS', payload: { localId, serverPhoto } });
-    } catch (e) {
-      dispatch({ type: 'UPLOAD_ERROR', payload: { localId, message: toUserMessage(e) } });
-    }
-  }
+  const onFilesSelected = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
 
-  async function onFilesSelected(files: FileList | null) {
-    if (!files || files.length === 0) return;
+      dispatch({ type: 'RESET_PAGE_ERROR' });
 
-    dispatch({ type: 'RESET_PAGE_ERROR' });
+      const items: UploadItem[] = Array.from(files).map((file) => {
+        const localId = makeLocalId();
+        const previewUrl = URL.createObjectURL(file);
+        objectUrlsRef.current.set(localId, previewUrl);
 
-    const items: UploadItem[] = Array.from(files).map((file) => {
-      const localId = makeLocalId();
-      const previewUrl = URL.createObjectURL(file);
-      objectUrlsRef.current.set(localId, previewUrl);
+        return {
+          localId,
+          file,
+          previewUrl,
+          progress: 0,
+          status: 'queued'
+        };
+      });
 
-      return {
-        localId,
-        file,
-        previewUrl,
-        progress: 0,
-        status: 'queued'
-      };
-    });
+      dispatch({ type: 'ADD_FILES', payload: { items } });
+      await Promise.allSettled(items.map((it) => uploadOne(it.localId, it.file)));
+    },
+    [uploadOne]
+  );
 
-    dispatch({ type: 'ADD_FILES', payload: { items } });
-
-    await Promise.allSettled(items.map((it) => uploadOne(it.localId, it.file)));
-  }
-
-  function removeUpload(localId: string) {
+  const removeUpload = useCallback((localId: string) => {
     const url = objectUrlsRef.current.get(localId);
     if (url) {
       try {
@@ -335,85 +355,239 @@ export function DraftPhotosPage() {
       objectUrlsRef.current.delete(localId);
     }
     dispatch({ type: 'REMOVE_UPLOAD', payload: { localId } });
-  }
+  }, []);
 
-  function retryUpload(localId: string) {
-    const item = state.uploads.find((u) => u.localId === localId);
-    if (!item) return;
-    void uploadOne(localId, item.file);
-  }
+  const retryUpload = useCallback(
+    (localId: string) => {
+      const item = state.uploads.find((u) => u.localId === localId);
+      if (!item) return;
+      void uploadOne(localId, item.file);
+    },
+    [state.uploads, uploadOne]
+  );
 
-  function setCover(photoId: string) {
+  const setCover = useCallback((photoId: string) => {
     dispatch({ type: 'SET_COVER', payload: { photoId } });
-  }
+  }, []);
 
-  function movePhoto(fromIndex: number, toIndex: number) {
-    // B4: any new reorder hides Saved immediately
-    hideSavedIndicator();
+  const movePhoto = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (fromIndex === toIndex) return;
 
-    // optimistic UX: any new reorder hides previous error
-    setOrderSaveError(null);
-    // also clear calm offline banner on new reorder attempt
-    setWaitingForOnline(false);
-    dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
-  }
+      // B4: any new reorder hides Saved immediately
+      hideSavedIndicator();
 
-  // HTML5 DnD (optional in tests; kept for real UX)
-  function onDragStart(e: React.DragEvent<HTMLDivElement>, fromIndex: number) {
-    // B6: start micro-feedback
-    setDraggingIndex(fromIndex);
-    setDropTargetIndex(fromIndex);
+      // optimistic UX: any new reorder hides previous error
+      setOrderSaveError(null);
+      // also clear calm offline banner on new reorder attempt
+      setWaitingForOnline(false);
 
-    // New reorder should immediately clear old UI states
-    hideSavedIndicator();
-    setOrderSaveError(null);
-    setWaitingForOnline(false);
+      dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
+    },
+    [hideSavedIndicator]
+  );
 
+  // HTML5 DnD
+  const onDragStart = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, fromIndex: number) => {
+      setDraggingIndex(fromIndex);
+      setDropTargetIndex(fromIndex);
+
+      hideSavedIndicator();
+      setOrderSaveError(null);
+      setWaitingForOnline(false);
+
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(fromIndex));
+      } catch {
+        // ignore
+      }
+    },
+    [hideSavedIndicator]
+  );
+
+  const onDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
     try {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(fromIndex));
+      e.dataTransfer.dropEffect = 'move';
     } catch {
       // ignore
     }
-  }
 
-  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    const idx = getClosestDpIndex(e.target);
+    if (idx !== null) setDropTargetIndex(idx);
+  }, []);
 
-    // B6: update drop target (closest card)
-    const el = (e.target as HTMLElement | null)?.closest?.('[data-dp-index]') as HTMLElement | null;
-    const raw = el?.dataset?.dpIndex ?? '';
-    const idx = Number(raw);
+  const onDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, toIndex: number) => {
+      e.preventDefault();
+      const raw = (() => {
+        try {
+          return e.dataTransfer.getData('text/plain');
+        } catch {
+          return '';
+        }
+      })();
 
-    if (Number.isFinite(idx) && idx >= 0) {
-      setDropTargetIndex(idx);
+      const fromIndex = Number(raw);
+      if (!Number.isFinite(fromIndex)) return;
+
+      triggerSettle(toIndex);
+      movePhoto(fromIndex, toIndex);
+
+      setDraggingIndex(null);
+      setDropTargetIndex(null);
+    },
+    [movePhoto, triggerSettle]
+  );
+
+  const onDragEnd = useCallback(() => {
+    triggerSettle(dropTargetIndexRef.current);
+
+    setDraggingIndex(null);
+    setDropTargetIndex(null);
+  }, [triggerSettle]);
+
+  // B8: touch long-press reorder (Pointer Events)
+  const longPressMs = 350;
+  const touchPressTimerRef = useRef<number | null>(null);
+  const touchActiveRef = useRef(false);
+  const touchFromIndexRef = useRef<number | null>(null);
+
+  const clearTouchTimer = useCallback(() => {
+    if (touchPressTimerRef.current !== null) {
+      window.clearTimeout(touchPressTimerRef.current);
+      touchPressTimerRef.current = null;
     }
-  }
+  }, []);
 
-  function onDrop(e: React.DragEvent<HTMLDivElement>, toIndex: number) {
-    e.preventDefault();
-    const raw = e.dataTransfer.getData('text/plain');
-    const fromIndex = Number(raw);
-    if (!Number.isFinite(fromIndex)) return;
+  useEffect(() => {
+    return () => clearTouchTimer();
+  }, [clearTouchTimer]);
 
-    // settle feedback on target
-    triggerSettle(toIndex);
+  const startTouchReorder = useCallback(
+    (fromIndex: number) => {
+      touchActiveRef.current = true;
+      touchFromIndexRef.current = fromIndex;
 
-    movePhoto(fromIndex, toIndex);
+      setDraggingIndex(fromIndex);
+      setDropTargetIndex(fromIndex);
 
-    // end drag state
-    setDraggingIndex(null);
-    setDropTargetIndex(null);
-  }
+      hideSavedIndicator();
+      setOrderSaveError(null);
+      setWaitingForOnline(false);
+    },
+    [hideSavedIndicator]
+  );
 
-  function onDragEnd() {
-    // if drag ends without drop, still clear states
-    triggerSettle(dropTargetIndex);
+  const endTouchReorder = useCallback(
+    (toIndex: number | null) => {
+      const fromIndex = touchFromIndexRef.current;
 
-    setDraggingIndex(null);
-    setDropTargetIndex(null);
-  }
+      if (touchActiveRef.current && fromIndex !== null && toIndex !== null) {
+        triggerSettle(toIndex);
+        movePhoto(fromIndex, toIndex);
+      }
+
+      touchActiveRef.current = false;
+      touchFromIndexRef.current = null;
+
+      setDraggingIndex(null);
+      setDropTargetIndex(null);
+    },
+    [movePhoto, triggerSettle]
+  );
+
+  const onPointerDownCard = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, fromIndex: number) => {
+      if (e.pointerType !== 'touch') return;
+
+      // capture ensures pointer events continue to be delivered
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {
+        // ignore
+      }
+
+      clearTouchTimer();
+      touchActiveRef.current = false;
+      touchFromIndexRef.current = fromIndex;
+
+      // long-press activates reorder; until then, do nothing
+      touchPressTimerRef.current = window.setTimeout(() => {
+        touchPressTimerRef.current = null;
+        startTouchReorder(fromIndex);
+      }, longPressMs);
+    },
+    [clearTouchTimer, startTouchReorder]
+  );
+
+  const onPointerMoveCard = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch') return;
+    if (!touchActiveRef.current) return;
+
+    // In tests, event.target often remains the original element.
+    // We MUST use coordinates-based hit-testing (elementFromPoint) to find the hovered card.
+    const idx = getDpIndexFromPoint(e.clientX, e.clientY) ?? getClosestDpIndex(e.target);
+    if (idx !== null) setDropTargetIndex(idx);
+  }, []);
+
+  const onPointerUpCard = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType !== 'touch') return;
+
+      // if user released before long-press -> cancel
+      if (!touchActiveRef.current) {
+        clearTouchTimer();
+        touchFromIndexRef.current = null;
+        return;
+      }
+
+      clearTouchTimer();
+
+      const idx =
+        getDpIndexFromPoint(e.clientX, e.clientY) ??
+        getClosestDpIndex(e.target) ??
+        dropTargetIndexRef.current;
+
+      endTouchReorder(idx ?? null);
+    },
+    [clearTouchTimer, endTouchReorder]
+  );
+
+  const onPointerCancelCard = useCallback(() => {
+    clearTouchTimer();
+
+    if (touchActiveRef.current) {
+      // end without drop: just clear UI states
+      triggerSettle(dropTargetIndexRef.current);
+      touchActiveRef.current = false;
+      touchFromIndexRef.current = null;
+      setDraggingIndex(null);
+      setDropTargetIndex(null);
+    }
+  }, [clearTouchTimer, triggerSettle]);
+
+  const moveDown = useCallback(
+    (photoId: string) => {
+      const fromIndex = state.photos.findIndex((p) => p.id === photoId);
+      if (fromIndex < 0) return;
+      const toIndex = Math.min(state.photos.length - 1, fromIndex + 1);
+      movePhoto(fromIndex, toIndex);
+    },
+    [movePhoto, state.photos]
+  );
+
+  const moveUp = useCallback(
+    (photoId: string) => {
+      const fromIndex = state.photos.findIndex((p) => p.id === photoId);
+      if (fromIndex < 0) return;
+      const toIndex = Math.max(0, fromIndex - 1);
+      movePhoto(fromIndex, toIndex);
+    },
+    [movePhoto, state.photos]
+  );
 
   if (!adId) {
     return <ErrorBox title="Ошибка" message="Нет adId в URL (ожидался параметр :id)." />;
@@ -427,28 +601,24 @@ export function DraftPhotosPage() {
 
       {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
 
-      {/* B3.3: calm offline message has priority over saving */}
       {waitingForOnline && (
         <div data-testid="waiting-for-online" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
           Нет сети — сохраним при появлении соединения.
         </div>
       )}
 
-      {/* B4: Saved ✓ (priority: only when no higher-priority status is shown) */}
       {showSaved && !waitingForOnline && !isSavingOrder && !orderSaveError && (
         <div data-testid="order-saved" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
           ✓ Saved
         </div>
       )}
 
-      {/* B2: saving / error / retry */}
       {isSavingOrder && !waitingForOnline && (
         <div data-testid="saving-indicator" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
           Сохраняю порядок…
         </div>
       )}
 
-      {/* When waitingForOnline, hide error+retry completely (polish) */}
       {orderSaveError && !isSavingOrder && !waitingForOnline && (
         <div data-testid="order-save-error" style={{ marginBottom: 10 }}>
           <ErrorBox title="Не удалось сохранить порядок" message={orderSaveError} />
@@ -467,6 +637,7 @@ export function DraftPhotosPage() {
         </div>
       )}
 
+      {/* Keep input in DOM always (tests rely on it); disable when no access */}
       <div style={{ marginBottom: 12 }}>
         <input
           type="file"
@@ -504,11 +675,7 @@ export function DraftPhotosPage() {
                 justifyContent: 'center'
               }}
             >
-              <img
-                src={u.previewUrl}
-                alt={u.file.name}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
+              <img src={u.previewUrl} alt={u.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
 
             <div style={{ display: 'grid', gap: 6 }}>
@@ -575,20 +742,25 @@ export function DraftPhotosPage() {
                   onDragOver={onDragOver}
                   onDrop={(e) => onDrop(e, idx)}
                   onDragEnd={onDragEnd}
+                  onPointerDown={(e) => onPointerDownCard(e, idx)}
+                  onPointerMove={onPointerMoveCard}
+                  onPointerUp={onPointerUpCard}
+                  onPointerCancel={onPointerCancelCard}
                   className={classes}
                   style={{
                     width: 160,
                     borderRadius: 10,
                     overflow: 'hidden',
                     border: isCover ? '2px solid #111' : '1px solid #ddd',
-                    background: '#fff'
+                    background: '#fff',
+                    touchAction: 'none'
                   }}
                 >
                   <div style={{ position: 'relative', width: '100%', height: 90 }}>
                     <img
                       src={p.url}
-                      alt="uploaded"
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      alt=""
+                      style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
                     />
 
                     {isCover && (
@@ -611,48 +783,37 @@ export function DraftPhotosPage() {
                   </div>
 
                   <div style={{ display: 'grid', gap: 6, padding: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => setCover(p.id)}
-                      disabled={isCover}
-                      style={{ width: '100%' }}
-                    >
+                    <button type="button" onClick={() => setCover(p.id)} disabled={isCover} style={{ width: '100%' }}>
                       {isCover ? 'Cover' : 'Make cover'}
                     </button>
 
-                    {/* fallback controls used in tests */}
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    {/* fallback reorder buttons for tests + accessibility */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       <button
                         type="button"
-                        aria-label={`Move photo ${idx} up`}
                         data-testid={`move-up-${p.id}`}
-                        onClick={() => movePhoto(idx, idx - 1)}
+                        onClick={() => moveUp(p.id)}
                         disabled={idx === 0}
-                        style={{ width: '100%' }}
                       >
                         ↑
                       </button>
                       <button
                         type="button"
-                        aria-label={`Move photo ${idx} down`}
                         data-testid={`move-down-${p.id}`}
-                        onClick={() => movePhoto(idx, idx + 1)}
+                        onClick={() => moveDown(p.id)}
                         disabled={idx === state.photos.length - 1}
-                        style={{ width: '100%' }}
                       >
                         ↓
                       </button>
                     </div>
-
-                    <div style={{ fontSize: 11, opacity: 0.65 }}>Drag to reorder</div>
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-            Можно перетаскивать карточки для reorder. В тестах reorder проверяем через кнопки ↑↓.
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+            Mobile: long-press a photo, then drag to reorder.
           </div>
         </div>
       )}

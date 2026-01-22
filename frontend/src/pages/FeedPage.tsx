@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+// frontend/src/pages/FeedPage.tsx
+
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as AdsApi from '../api/ads.api';
 import { ApiError } from '../api/http';
@@ -12,21 +14,33 @@ type FeedPhoto = { id: string; url: string; order: number };
 type FeedAdMaybePhotos = AdsApi.AdListItem & { photos?: FeedPhoto[] };
 
 export function FeedPage() {
-  const { locationId } = useLocationStore();
-  const [ads, setAds] = useState<AdsApi.AdListItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Store does NOT expose `locationId` directly (TS error).
+  // It likely stores selected location object; we derive the id from it.
+  const { location } = useLocationStore() as unknown as { location?: { id: string } | null };
+  const locationId = location?.id ?? '';
+
+  const [ads, setAds] = useState<FeedAdMaybePhotos[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
-      if (!locationId) return;
+      if (!locationId) {
+        setAds([]);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
       setError(null);
       setLoading(true);
+
       try {
         const data = await AdsApi.feed({ locationId });
         if (!alive) return;
-        setAds(data);
+        setAds(data as FeedAdMaybePhotos[]);
       } catch (err) {
         const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
         if (alive) setError(msg);
@@ -34,30 +48,32 @@ export function FeedPage() {
         if (alive) setLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, [locationId]);
 
-  const byAdId = useMemo(() => new Map(ads.map((a) => [a.id, a] as const)), [ads]);
-
   return (
     <div>
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <h2>Feed</h2>
-        <span className="small muted">locationId: {locationId}</span>
+        {!!locationId && <span className="small muted">locationId: {locationId}</span>}
       </div>
+
+      {!locationId && (
+        <p className="muted" style={{ marginTop: 10 }}>
+          Select a location to see the feed.
+        </p>
+      )}
 
       {error && <ErrorBox message={error} />}
       {loading && <Loading />}
 
-      {!loading && (
+      {!loading && !!locationId && (
         <div className="grid">
           {ads.map((ad) => {
-            // If feed starts returning photos later, UI will pick it up safely.
-            const maybe = byAdId.get(ad.id) as FeedAdMaybePhotos | undefined;
-            const photos = maybe?.photos ?? [];
-
+            const photos = ad.photos ?? [];
             const preview = photos.find((p) => p.order === 1) ?? photos[0] ?? null;
             const photosCount = photos.length;
 
