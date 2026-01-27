@@ -1,0 +1,35 @@
+/* frontend/src/pages/draftPhotos.mobileReorder.css */
+
+/* Default: hidden */
+.dp-touch-hint {
+  display: none;
+}
+
+/* Show subtle hint only on coarse pointers (mobile) */
+@media (pointer: coarse) {
+  .dp-touch-hint {
+    display: block;
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    opacity: 0.75;
+    user-select: none;
+    pointer-events: none;
+  }
+}
+
+/* Armed state (finger down, before long-press activates) */
+.dp-item.is-touch-armed {
+  outline: 2px solid rgba(0, 0, 0, 0.25);
+  outline-offset: 2px;
+}
+
+/* While touch dragging, slightly reduce hint */
+.dp-item.is-touch-dragging .dp-touch-hint {
+  opacity: 0.35;
+}
