@@ -1,0 +1,37 @@
+/* frontend/src/pages/draftPhotos.a11y.css */
+
+/* Visually hidden but accessible to screen readers */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Focus ring for keyboard navigation */
+.draft-photos-item:focus,
+.draft-photos-item:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+/* Stronger focus when "lifted" in keyboard mode */
+.draft-photos-item[data-kbd-lifted="true"] {
+  outline: 3px solid currentColor;
+  outline-offset: 4px;
+}
+
+/* Optional: show a subtle hint when focused (can be adjusted) */
+.draft-photos-item:focus-visible .draft-photos-item__kbd-hint {
+  opacity: 1;
+}
+
+.draft-photos-item__kbd-hint {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
