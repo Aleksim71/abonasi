@@ -14,16 +14,24 @@
 }
 
 /* Focus ring for keyboard navigation */
-.dp-focus:focus {
-  outline: 2px solid #111;
-  outline-offset: 2px;
+.draft-photos-item:focus,
+.draft-photos-item:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 
-.dp-focus:focus:not(:focus-visible) {
-  outline: none;
+/* Stronger focus when "lifted" in keyboard mode */
+.draft-photos-item[data-kbd-lifted="true"] {
+  outline: 3px solid currentColor;
+  outline-offset: 4px;
 }
 
-.dp-focus:focus-visible {
-  outline: 2px solid #111;
-  outline-offset: 2px;
+/* Optional: show a subtle hint when focused */
+.draft-photos-item:focus-visible .draft-photos-item__kbd-hint {
+  opacity: 1;
+}
+
+.draft-photos-item__kbd-hint {
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
