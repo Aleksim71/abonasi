@@ -1,0 +1,19 @@
+/* SectionsPage.css */
+
+.screen {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+}

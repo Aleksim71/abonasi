@@ -1,0 +1,62 @@
+/* frontend/src/pages/MenuPage/MenuPage.css */
+
+.menuScreen {
+  min-height: 100vh;
+  background: #ffffff;
+  color: #111;
+  padding: 24px 16px 40px;
+}
+
+.menuHeader {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.menuTitle {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.2px;
+  /* легкий намек на «газетность», как в твоем референсе */
+  font-family: ui-serif, Georgia, 'Times New Roman', Times, serif;
+}
+
+.menuList {
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.menuBtn {
+  height: 62px;
+  border: none;
+  border-radius: 14px;
+  background: #f1f1f1;
+  color: #1a2a7a; /* спокойный “утилитарный” синий */
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.menuBtn:hover {
+  background: #eaeaea;
+}
+
+.menuBtn:active {
+  transform: translateY(1px);
+}
+
+.menuBtn:focus-visible {
+  outline: 2px solid #b9bf27;
+  outline-offset: 2px;
+}
+
+.menuBtn[disabled],
+.menuBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

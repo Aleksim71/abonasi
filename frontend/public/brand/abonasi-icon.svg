@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 236" width="400" height="236" aria-hidden="true" focusable="false">
+  <!-- Abonasi icon mark (derived from anchor A). Monochrome via currentColor -->
+  <g fill="currentColor">
+    <path d="
+      M0 0H400V23H0Z
+      M0 0H38V216H0Z
+      M362 0H400V216H362Z
+      M0 192H295V216H0Z
+      M155 23H245V192H155Z
+      M295 192L330 175H362V192Z
+    "/>
+
+    <path fill-rule="evenodd" d="
+      M92 63H308V158H92Z
+      M99 70H301V151H99Z
+      M286 158L308 136V158Z
+    "/>
+
+    <circle cx="200.0" cy="61" r="8"/>
+  </g>
+</svg>

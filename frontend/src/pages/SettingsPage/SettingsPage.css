@@ -1,0 +1,169 @@
+/* frontend/src/pages/SettingsPage/SettingsPage.css */
+
+.settingsScreen {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 28px 16px 40px;
+}
+
+.settingsHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 6px 0 18px;
+}
+
+.settingsTitle {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.settingsBack {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #f2f2f2;
+
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settingsBack:hover {
+  background: #eeeeee;
+}
+
+.settingsGroup {
+  margin-top: 14px;
+}
+
+.settingsCard {
+  border-radius: 14px;
+  background: #f2f2f2;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 14px 14px;
+}
+
+.settingsCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settingsCardTitle {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.settingsCardMeta {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+
+.settingsHint {
+  margin-top: 10px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+/* Select */
+
+.settingsSelect {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: #ffffff;
+
+  font-size: 14px;
+}
+
+/* Switch */
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 50px;
+  height: 30px;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switchTrack {
+  width: 50px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.12);
+  transition: background 120ms ease, border-color 120ms ease;
+  position: relative;
+}
+
+.switchTrack::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  transform: translateY(-50%);
+
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  transition: left 140ms ease;
+}
+
+.switch input:checked + .switchTrack {
+  background: #b9b61d;
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
+.switch input:checked + .switchTrack::after {
+  left: 24px;
+}
+
+/* Danger */
+
+.settingsCardDanger {
+  border: 1px solid rgba(210, 0, 0, 0.35);
+  background: rgba(210, 0, 0, 0.06);
+}
+
+.dangerBtn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+
+  border: 1px solid rgba(210, 0, 0, 0.45);
+  background: #ffffff;
+
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.dangerBtn:hover {
+  background: rgba(210, 0, 0, 0.06);
+}
