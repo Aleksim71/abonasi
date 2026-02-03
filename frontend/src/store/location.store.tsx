@@ -1,32 +1,45 @@
-// frontend/src/store/location.store.tsx
 import { create } from 'zustand';
-import {
-  INITIAL_LOCATION_STATE,
-  formatLocation,
-  type LocationItem,
-} from './location.constants';
+import { persist } from 'zustand/middleware';
 
-type LocationState = LocationItem & {
-  setCountry: (country: string | undefined) => void;
-  setCity: (city: string | undefined) => void;
-  setDistrict: (district: string | undefined) => void;
-  reset: () => void;
+import { LOCATIONS } from './location.constants';
+
+type LocationState = {
+  selectedId?: string;
+
+  setLocation: (id: string) => void;
+
+  hasLocation: () => boolean;
   asLabel: () => string;
+
+  reset: () => void;
 };
 
-export const useLocationStore = create<LocationState>((set, get) => ({
-  ...INITIAL_LOCATION_STATE,
+const INITIAL: Pick<LocationState, 'selectedId'> = {
+  selectedId: undefined
+};
 
-  setCountry: (country) => set({ country }),
-  setCity: (city) => set({ city }),
-  setDistrict: (district) => set({ district }),
+export const useLocationStore = create<LocationState>()(
+  persist(
+    (set, get) => ({
+      ...INITIAL,
 
-  reset: () => set({ ...INITIAL_LOCATION_STATE }),
+      setLocation: (id) => set({ selectedId: id }),
 
-  asLabel: () =>
-    formatLocation({
-      country: get().country,
-      city: get().city,
-      district: get().district,
+      hasLocation: () => Boolean(get().selectedId),
+
+      asLabel: () => {
+        const id = get().selectedId;
+        if (!id) return '';
+        const found = LOCATIONS.find((x) => x.id === id);
+        return found ? found.label : id;
+      },
+
+      reset: () => set({ ...INITIAL })
     }),
-}));
+    {
+      name: 'abonasi.location.v1',
+      version: 1,
+      partialize: (s) => ({ selectedId: s.selectedId })
+    }
+  )
+);
