@@ -1,0 +1,85 @@
+/* frontend/src/pages/RulesPage/RulesPage.css */
+
+.screen {
+  min-height: 100vh;
+  padding: 40px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pageHeader {
+  width: 520px;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pageTitle {
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.headerSpacer {
+  width: 44px;
+  height: 44px;
+}
+
+.iconBtn {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #f2f2f2;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.iconBtn:hover {
+  filter: brightness(0.98);
+}
+
+.iconBtn:active {
+  transform: translateY(1px);
+}
+
+.content {
+  width: 520px;
+  max-width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #f2f2f2;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.9;
+}

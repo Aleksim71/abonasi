@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Abonasi — Меню</title>
+
+  <style>
+    /* ---------- Base ---------- */
+    :root {
+      --bg: #ffffff;
+      --text: #111111;
+      --btn-bg: #f1f1f1;
+      --btn-bg-active: #e5e5e5;
+      --radius: 12px;
+      --gap-sm: 12px;
+      --gap-lg: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ---------- Layout ---------- */
+    .screen {
+      max-width: 420px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    header {
+      text-align: center;
+      margin-top: 8px;
+      margin-bottom: var(--gap-lg);
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .menu {
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-sm);
+    }
+
+    .spacer {
+      height: var(--gap-lg);
+    }
+
+    /* ---------- Buttons ---------- */
+    .menu-button {
+      height: 56px;
+      border-radius: var(--radius);
+      border: none;
+      background: var(--btn-bg);
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .menu-button:active {
+      background: var(--btn-bg-active);
+    }
+
+    .menu-button[disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="screen">
+    <header>
+      <h1>Abonasi</h1>
+    </header>
+
+    <nav class="menu">
+      <!-- Конфигурация -->
+      <button class="menu-button">Локация</button>
+      <button class="menu-button" disabled>Разделы</button>
+      <button class="menu-button" disabled>Подписки</button>
+
+      <div class="spacer"></div>
+
+      <!-- Управление -->
+      <button class="menu-button">Настройки</button>
+
+      <div class="spacer"></div>
+
+      <!-- Информация -->
+      <button class="menu-button">О проекте</button>
+      <button class="menu-button">Правила</button>
+    </nav>
+  </main>
+</body>
+</html>

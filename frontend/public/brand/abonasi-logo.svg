@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 425 264" width="425" height="264" aria-hidden="true" focusable="false">
+  <!-- Abonasi logo mark (anchor A). Monochrome via currentColor -->
+  <g fill="currentColor">
+    <!-- Frame + pillar + arrow -->
+    <path d="
+      M0 0H425V25H0Z
+      M0 0H40V245H0Z
+      M385 0H425V245H385Z
+      M0 219H320V245H0Z
+      M166 25H263V219H166Z
+      M320 219L350 200H385V219Z
+    "/>
+
+    <!-- Detached small corner piece (stylized) -->
+    <path d="M330 245L380 264L425 245Z"/>
+
+    <!-- Paper border with folded corner (evenodd cutout) -->
+    <path fill-rule="evenodd" d="
+      M70 55H355V180H70Z
+      M77 62H348V173H77Z
+      M327 180L355 152V180Z
+    "/>
+
+    <!-- Pin -->
+    <circle cx="212.5" cy="53" r="9"/>
+  </g>
+</svg>
