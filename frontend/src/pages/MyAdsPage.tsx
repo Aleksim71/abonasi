@@ -5,6 +5,8 @@ import { ApiError } from '../api/http';
 import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 
+import './myAds.css';
+
 function statusLabel(status: AdsApi.AdStatus): string {
   switch (status) {
     case 'draft':
@@ -16,6 +18,10 @@ function statusLabel(status: AdsApi.AdStatus): string {
     default:
       return status;
   }
+}
+
+function statusClass(status: AdsApi.AdStatus): string {
+  return `myads__status myads__status--${status}`;
 }
 
 export function MyAdsPage() {
@@ -31,7 +37,8 @@ export function MyAdsPage() {
       const data = await AdsApi.myAds();
       setAds(data);
     } catch (err) {
-      const msg = err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
+      const msg =
+        err instanceof ApiError ? `${err.errorCode}: ${err.message}` : 'Unknown error';
       setError(msg);
     } finally {
       setLoading(false);
@@ -52,9 +59,9 @@ export function MyAdsPage() {
   }, [load]);
 
   return (
-    <div>
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h2>Мои объявления</h2>
+    <div className="myads">
+      <div className="myads__header">
+        <h2 className="myads__title">Мои объявления</h2>
 
         <Link className="btn" to="/draft/new" style={{ textDecoration: 'none' }}>
           Создать объявление
@@ -62,7 +69,7 @@ export function MyAdsPage() {
       </div>
 
       {error && (
-        <div className="row" style={{ marginTop: 12, alignItems: 'flex-start' }}>
+        <div className="myads__retry">
           <div style={{ flex: 1 }}>
             <ErrorBox title="Ошибка" message={error} />
           </div>
@@ -75,9 +82,9 @@ export function MyAdsPage() {
       {loading && <Loading />}
 
       {!loading && !error && ads.length === 0 && (
-        <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
-          <strong>У вас пока нет объявлений</strong>
-          <div className="small muted" style={{ marginTop: 6 }}>
+        <div className="card myads__empty">
+          <div className="myads__empty-title">У вас пока нет объявлений</div>
+          <div className="myads__empty-text muted">
             Создайте первое объявление — это займёт пару минут.
           </div>
           <div style={{ marginTop: 12 }}>
@@ -89,19 +96,23 @@ export function MyAdsPage() {
       )}
 
       {!loading && !error && ads.length > 0 && (
-        <div className="grid" style={{ marginTop: 12 }}>
+        <div className="myads__grid">
           {ads.map((ad) => (
-            <div className="card" key={ad.id}>
-              <div className="row" style={{ justifyContent: 'space-between' }}>
-                <strong>{ad.title}</strong>
-                <span className="small muted">{statusLabel(ad.status)}</span>
+            <div className="card myads__card" key={ad.id}>
+              <div className="myads__card-meta">
+                <div className="myads__card-title">{ad.title}</div>
+                <span className={statusClass(ad.status)}>
+                  {statusLabel(ad.status)}
+                </span>
               </div>
 
-              <div className="small muted" style={{ marginTop: 6 }}>
-                {ad.price != null ? `${ad.price} ${ad.currency ?? ''}`.trim() : 'Цена не указана'}
+              <div className="small muted">
+                {ad.price != null
+                  ? `${ad.price} ${ad.currency ?? ''}`.trim()
+                  : 'Цена не указана'}
               </div>
 
-              <div style={{ marginTop: 10 }}>
+              <div>
                 <Link to={`/ads/${ad.id}`}>Открыть</Link>
               </div>
             </div>
