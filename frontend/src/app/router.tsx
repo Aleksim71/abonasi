@@ -13,7 +13,7 @@ import { MyAdsPage } from '../pages/MyAdsPage';
 import { DraftCreatePage } from '../pages/DraftCreatePage';
 import { DraftPhotosPage } from '../pages/DraftPhotosPage';
 
-// Configuration pages
+// Configuration pages (direct imports)
 import { MenuPage } from '../pages/MenuPage/MenuPage';
 import { SectionsPage } from '../pages/SectionsPage/SectionsPage';
 import { SubscriptionsPage } from '../pages/SubscriptionsPage/SubscriptionsPage';
@@ -56,7 +56,7 @@ export const router = createBrowserRouter([
       // ---- dev (публично) ----
       { path: '__dev/draft-photos', element: <DraftPhotosPlayground /> },
 
-      // ---- публичная зона (нужна локация, но не нужен логин) ----
+      // ---- публичная зона (нужна локация, логин не нужен) ----
       {
         element: <RequireLocation />,
         children: [
@@ -65,7 +65,7 @@ export const router = createBrowserRouter([
         ]
       },
 
-      // ---- приватная зона (логин + локация) ----
+      // ---- приватная зона (нужны логин + локация) ----
       {
         element: <RequireAuth />,
         children: [
