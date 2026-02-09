@@ -1,15 +1,20 @@
 'use strict';
 
 /**
- * ads.lifecycle.js
+ * backend/src/modules/ads/ads.lifecycle.js
  * Business flows + transactions + trigger bypass (SET LOCAL).
  *
  * IMPORTANT:
  * - No req/res here.
  * - Throw typed errors with "code" to let controller map them to HTTP.
+ *
+ * NOTE:
+ * This file is a standalone lifecycle façade. If your controllers currently import
+ * per-flow lifecycles (ads.create.lifecycle.js / ads.publish.lifecycle.js / etc.),
+ * keep those as-is and use this file only if/when you wire it in.
  */
 
-const pool = require('../../db/pool'); // ⚠️ поправь путь под твой проект
+const { pool } = require('../../config/db'); // ✅ matches your project (ads.controller.js uses ../../config/db)
 const Q = require('./ads.queries');
 const { mapAdRow } = require('./ads.mappers');
 const { ERROR_CODES } = require('../../utils/errorCodes');
@@ -31,7 +36,9 @@ async function withTx(fn) {
   } catch (e) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch {
+      /* intentionally ignored */
+    }
     throw e;
   } finally {
     client.release();
@@ -40,10 +47,9 @@ async function withTx(fn) {
 
 /**
  * Bypass strict trigger inside current tx.
- * Use SET LOCAL or set_config(..., true) — depending on your existing trigger logic.
+ * Your DB trigger uses SET_CONFIG('app.allow_non_draft_update', '1', true).
  */
 async function allowNonDraftUpdates(client) {
-  // твой текущий паттерн:
   await client.query(`SELECT set_config('app.allow_non_draft_update','1', true)`);
 }
 
@@ -61,7 +67,6 @@ async function updateDraft({ userId, adId, patch }) {
     if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'draft') {
-      // draft-only rule enforced also by trigger, но тут даём понятную ошибку
       throw err(ERROR_CODES.NOT_ALLOWED, 'only draft can be updated');
     }
 
@@ -80,7 +85,6 @@ async function publish({ userId, adId }) {
       throw err(ERROR_CODES.NOT_ALLOWED, 'only draft can be published');
     }
 
-    // статус меняется не-draft апдейтом → разрешаем в рамках tx
     await allowNonDraftUpdates(client);
 
     const row = await Q.setAdStatus(client, adId, 'active');
@@ -109,11 +113,7 @@ async function stop({ userId, adId }) {
 /**
  * restart rules:
  * - stopped -> active : OK
- * - active -> active : NOT_ALLOWED (or idempotent?) — keep your current behavior
- * - draft -> ? : NOT_ALLOWED
- * - if there is an "active fork exists" etc. -> CONFLICT
- *
- * You said you fixed NOT_ALLOWED vs CONFLICT — keep that logic here.
+ * - if conflict exists (replaced_by_ad_id, etc.) -> CONFLICT
  */
 async function restart({ userId, adId, checkConflict }) {
   return withTx(async (client) => {
@@ -121,11 +121,9 @@ async function restart({ userId, adId, checkConflict }) {
     if (!cur) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
     if (cur.status !== 'stopped') {
-      // ✅ именно NOT_ALLOWED для неправильного статуса
       throw err(ERROR_CODES.NOT_ALLOWED, 'only stopped can be restarted');
     }
 
-    // ✅ CONFLICT только если реально есть конфликт по доменной логике
     if (typeof checkConflict === 'function') {
       const conflict = await checkConflict({ client, adRow: cur });
       if (conflict) throw err(ERROR_CODES.CONFLICT, 'restart conflict', conflict);
@@ -144,13 +142,10 @@ async function fork({ userId, adId }) {
     const source = await Q.lockAdById(client, adId);
     if (!source) throw err(ERROR_CODES.NOT_FOUND, 'ad not found');
 
-    // ⚠️ Подстрой правила: обычно форкают active или stopped — как у тебя в тесте.
     if (source.status !== 'active' && source.status !== 'stopped') {
       throw err(ERROR_CODES.NOT_ALLOWED, 'only active/stopped can be forked');
     }
 
-    // Важно: форк — это insert (триггер draft-only не мешает), но если ты делаешь апдейт source —
-    // разрешай allowNonDraftUpdates(client).
     const forked = await Q.forkAdFromSource(client, source, userId);
     await Q.insertAdVersionSnapshot(client, forked, { action: 'fork', actorUserId: userId });
 

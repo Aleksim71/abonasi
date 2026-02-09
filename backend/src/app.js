@@ -12,6 +12,10 @@ const app = express();
 
 app.use(express.json({ limit: '1mb' }));
 
+// Serve uploaded files behind /api (so Vite proxy can forward it)
+const UPLOADS_DIR = path.join(__dirname, '../public/uploads');
+app.use('/api/uploads', express.static(UPLOADS_DIR));
+
 /**
  * OpenAPI YAML served from repo-root /docs/openapi.yaml
  * backend/src -> ../../docs/openapi.yaml

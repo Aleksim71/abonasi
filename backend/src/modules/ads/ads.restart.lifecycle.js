@@ -91,7 +91,9 @@ async function restartAdTx({ userId, adId }) {
   } catch (e) {
     try {
       await client.query('ROLLBACK');
-    } catch {}
+    } catch {
+      /* intentionally ignored */
+    }
 
     // bubble known http errors as-is
     if (e && e.status && e.body) throw e;

@@ -7,6 +7,8 @@ const { requireAuth } = require('../../middleware/auth');
 const { optionalAuth } = require('../../middleware/optionalAuth');
 
 const ads = require('./ads.controller');
+const { maybeUploadPhotos } = require('./ads.upload');
+const { uploadPhotosToDraft } = require('./ads.photos.upload.controller');
 
 /**
  * Lists
@@ -39,8 +41,15 @@ router.get('/:id/versions', optionalAuth, ads.getAdVersions);
 
 /**
  * Photos in draft
+ * - multipart: field "photos" -> handled by uploadPhotosToDraft
+ * - json: { filePath, sortOrder? } -> handled by old ads.addPhotoToDraft (kept for compatibility)
  */
-router.post('/:id/photos', requireAuth, ads.addPhotoToDraft);
+router.post('/:id/photos', requireAuth, maybeUploadPhotos, (req, res, next) => {
+  const hasFiles = Array.isArray(req.files) && req.files.length > 0;
+  if (hasFiles) return uploadPhotosToDraft(req, res, next);
+  return ads.addPhotoToDraft(req, res, next);
+});
+
 router.delete('/:id/photos/:photoId', requireAuth, ads.deletePhotoFromDraft);
 
 /**
