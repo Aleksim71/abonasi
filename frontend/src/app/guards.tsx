@@ -9,7 +9,7 @@ export function RequireAuth() {
 }
 
 export function RequireLocation() {
-  const { locationId } = useLocationStore();
-  if (!locationId) return <Navigate to="/locations" replace />;
+  const selectedId = useLocationStore((s) => s.selectedId);
+  if (!selectedId) return <Navigate to="/locations" replace />;
   return <Outlet />;
 }

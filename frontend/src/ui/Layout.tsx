@@ -1,63 +1,109 @@
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth.store';
-import { useLocationStore } from '../store/location.store';
 
-export function Layout() {
-  const { token, user, logout } = useAuth();
-  const { locationId, clearLocation } = useLocationStore();
+import './Layout.css';
+
+type MenuItem = {
+  label: string;
+  to: string;
+  requireAuth?: boolean;
+};
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const nav = useNavigate();
+  const loc = useLocation();
+  const { token, clearAuth } = useAuth();
+
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const isAuthed = Boolean(token);
+
+  const items: MenuItem[] = useMemo(
+    () => [
+      { label: 'Настройки', to: '/menu' },
+      { label: 'Правила', to: '/rules' },
+      { label: 'О проекте', to: '/about' },
+      { label: 'Для партнёров', to: '/partners' }
+    ],
+    []
+  );
+
+  useEffect(() => {
+    // close menu on route change
+    setOpen(false);
+  }, [loc.pathname]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    function onDocClick(e: MouseEvent) {
+      if (!open) return;
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (menuRef.current?.contains(t)) return;
+      if (btnRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onDocClick);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onDocClick);
+    };
+  }, [open]);
+
+  function onLogout() {
+    // MVP: client-side logout
+    localStorage.removeItem('token');
+    clearAuth();
+    nav('/login', { replace: true });
+  }
 
   return (
-    <div>
-      <header className="card" style={{ borderRadius: 0, borderLeft: 0, borderRight: 0 }}>
-        <div className="container">
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <Link to="/" style={{ textDecoration: 'none' }}>
-              <strong>Abonasi</strong>
-            </Link>
+    <div className="l-page">
+      <header className="l-header" aria-label="Верхняя панель">
+        <Link className="l-brand" to="/" aria-label="На главную">
+          Abonasi
+        </Link>
 
-            <div className="row">
-              {token ? (
-                <>
-                  <NavLink to="/feed">Feed</NavLink>
-                  <NavLink to="/my-ads">My Ads</NavLink>
-                  <NavLink to="/locations">Location</NavLink>
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      clearLocation();
-                    }}
-                    title="Clear location selection"
-                  >
-                    Clear location
-                  </button>
-                  <button className="btn" onClick={logout}>
-                    Logout
-                  </button>
-                </>
-              ) : (
-                <>
-                  <NavLink to="/login">Login</NavLink>
-                  <NavLink to="/register">Register</NavLink>
-                </>
+        <div className="l-header-right">
+          <button
+            ref={btnRef}
+            type="button"
+            className="l-menu-btn"
+            aria-label="Меню"
+            aria-haspopup="menu"
+            aria-expanded={open ? 'true' : 'false'}
+            onClick={() => setOpen((v) => !v)}
+          >
+            ☰
+          </button>
+
+          {open && (
+            <div ref={menuRef} className="l-menu" role="menu" aria-label="Меню">
+              {items
+                .filter((it) => (it.requireAuth ? isAuthed : true))
+                .map((it) => (
+                  <Link key={it.to} className="l-menu-item" to={it.to} role="menuitem">
+                    {it.label}
+                  </Link>
+                ))}
+
+              {isAuthed && (
+                <button type="button" className="l-menu-item l-menu-item-danger" onClick={onLogout}>
+                  Выйти
+                </button>
               )}
             </div>
-          </div>
-
-          <div className="small muted" style={{ marginTop: 8 }}>
-            {token ? (
-              <span>
-                user: {user?.email ?? '…'} | locationId: {locationId ?? '—'}
-              </span>
-            ) : (
-              <span>not authenticated</span>
-            )}
-          </div>
+          )}
         </div>
       </header>
 
-      <main className="container">
-        <Outlet />
-      </main>
+      <main className="l-main">{children}</main>
     </div>
   );
 }

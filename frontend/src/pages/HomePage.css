@@ -1,0 +1,33 @@
+.home {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 10px 0;
+  display: grid;
+  gap: 14px;
+}
+
+.home__title {
+  font-size: 28px;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.home__actions {
+  display: grid;
+  gap: 10px;
+}
+
+.home__btn {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: #fff;
+  padding: 12px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.home__btn--primary {
+  border-color: rgba(0, 0, 0, 0.22);
+  font-weight: 600;
+}
