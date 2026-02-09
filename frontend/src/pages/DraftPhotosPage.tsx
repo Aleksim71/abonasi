@@ -9,6 +9,7 @@ import { createDraftPhotosOrderPersister } from './draftPhotos.persistOrder';
 import './draftPhotos.reorderFeedback.css';
 import './draftPhotos.a11y.css';
 import './draftPhotos.mobileReorder.css';
+import './draftPhotos.page.css';
 import {
   draftPhotosReducer,
   initialDraftPhotosState,
@@ -101,6 +102,12 @@ export function DraftPhotosPage() {
 
   const objectUrlsRef = useRef<Map<string, string>>(new Map());
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
+
+  // file input ref for CTA buttons (keep input in DOM for tests)
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
 
   // B2: UX around debounced persist order
   const [isSavingOrder, setIsSavingOrder] = useState(false);
@@ -503,7 +510,6 @@ export function DraftPhotosPage() {
     (e: React.PointerEvent<HTMLDivElement>, fromIndex: number) => {
       if (e.pointerType !== 'touch') return;
 
-      // capture ensures pointer events continue to be delivered
       try {
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       } catch {
@@ -514,7 +520,6 @@ export function DraftPhotosPage() {
       touchActiveRef.current = false;
       touchFromIndexRef.current = fromIndex;
 
-      // long-press activates reorder; until then, do nothing
       touchPressTimerRef.current = window.setTimeout(() => {
         touchPressTimerRef.current = null;
         startTouchReorder(fromIndex);
@@ -527,8 +532,6 @@ export function DraftPhotosPage() {
     if (e.pointerType !== 'touch') return;
     if (!touchActiveRef.current) return;
 
-    // In tests, event.target often remains the original element.
-    // We MUST use coordinates-based hit-testing (elementFromPoint) to find the hovered card.
     const idx = getDpIndexFromPoint(e.clientX, e.clientY) ?? getClosestDpIndex(e.target);
     if (idx !== null) setDropTargetIndex(idx);
   }, []);
@@ -537,7 +540,6 @@ export function DraftPhotosPage() {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.pointerType !== 'touch') return;
 
-      // if user released before long-press -> cancel
       if (!touchActiveRef.current) {
         clearTouchTimer();
         touchFromIndexRef.current = null;
@@ -560,7 +562,6 @@ export function DraftPhotosPage() {
     clearTouchTimer();
 
     if (touchActiveRef.current) {
-      // end without drop: just clear UI states
       triggerSettle(dropTargetIndexRef.current);
       touchActiveRef.current = false;
       touchFromIndexRef.current = null;
@@ -589,234 +590,275 @@ export function DraftPhotosPage() {
     [movePhoto, state.photos]
   );
 
+  const hasAnyServerPhotos = state.photos.length > 0;
+  const hasAnyUploads = state.uploads.length > 0;
+
   if (!adId) {
     return <ErrorBox title="Ошибка" message="Нет adId в URL (ожидался параметр :id)." />;
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ margin: '0 0 12px' }}>Фото объявления</h1>
-
-      {!token && <ErrorBox title="Нет доступа" message="Нужно войти в аккаунт, чтобы загружать фото." />}
-
-      {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
-
-      {waitingForOnline && (
-        <div data-testid="waiting-for-online" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
-          Нет сети — сохраним при появлении соединения.
-        </div>
-      )}
-
-      {showSaved && !waitingForOnline && !isSavingOrder && !orderSaveError && (
-        <div data-testid="order-saved" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
-          ✓ Saved
-        </div>
-      )}
-
-      {isSavingOrder && !waitingForOnline && (
-        <div data-testid="saving-indicator" style={{ marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
-          Сохраняю порядок…
-        </div>
-      )}
-
-      {orderSaveError && !isSavingOrder && !waitingForOnline && (
-        <div data-testid="order-save-error" style={{ marginBottom: 10 }}>
-          <ErrorBox title="Не удалось сохранить порядок" message={orderSaveError} />
-          <div style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              data-testid="persist-order-retry"
-              onClick={() => {
-                const started = orderPersister.retryNow();
-                if (!started) setOrderSaveError(null);
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Keep input in DOM always (tests rely on it); disable when no access */}
-      <div style={{ marginBottom: 12 }}>
-        <input
-          type="file"
-          multiple
-          accept="image/*"
-          data-testid="photo-file"
-          disabled={!canUpload}
-          onChange={(e) => void onFilesSelected(e.target.files)}
-        />
-      </div>
-
-      <div style={{ display: 'grid', gap: 12 }}>
-        {state.uploads.map((u) => (
-          <div
-            key={u.localId}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '96px 1fr auto',
-              alignItems: 'center',
-              gap: 12,
-              border: '1px solid #ddd',
-              borderRadius: 8,
-              padding: 10
-            }}
-          >
-            <div
-              style={{
-                width: 96,
-                height: 72,
-                borderRadius: 6,
-                overflow: 'hidden',
-                background: '#f5f5f5',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <img src={u.previewUrl} alt={u.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            </div>
-
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, wordBreak: 'break-word' }}>{u.file.name}</div>
-
-              <div style={{ fontSize: 12, opacity: 0.8 }}>
-                {u.status === 'queued' && 'В очереди'}
-                {u.status === 'uploading' && 'Загрузка...'}
-                {u.status === 'success' && 'Загружено ✅'}
-                {u.status === 'error' && `Ошибка: ${u.errorMessage ?? 'Upload failed'}`}
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <progress value={u.progress} max={100} style={{ width: '100%' }} />
-                <div style={{ width: 46, textAlign: 'right', fontSize: 12 }}>{Math.round(u.progress)}%</div>
-              </div>
-
-              {u.status === 'error' && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => retryUpload(u.localId)} disabled={!canUpload}>
-                    Retry
-                  </button>
-                  <button type="button" onClick={() => removeUpload(u.localId)}>
-                    Remove
-                  </button>
-                </div>
-              )}
-            </div>
-
+    <div className="dp-page">
+      <div className="dp-wrap">
+        <div className="dp-container">
+          <div className="dp-header">
             <div>
-              <button type="button" onClick={() => removeUpload(u.localId)} disabled={u.status === 'uploading'}>
-                ✕
+              <h1 className="dp-title">Фотографии</h1>
+              <p className="dp-subtitle muted small">
+                Добавьте фото — первое будет обложкой.
+              </p>
+            </div>
+
+            <div className="dp-actions">
+              <button type="button" className="btn" onClick={openFilePicker} disabled={!canUpload}>
+                Добавить фото
+              </button>
+              <button type="button" className="btn" disabled>
+                Опубликовать
               </button>
             </div>
           </div>
-        ))}
-      </div>
 
-      {state.photos.length > 0 && (
-        <div style={{ marginTop: 18 }}>
-          <h2 style={{ margin: '0 0 10px', fontSize: 16 }}>Загруженные фото</h2>
+          {!token && <ErrorBox title="Нет доступа" message="Нужно войти в аккаунт, чтобы загружать фото." />}
 
-          <div data-testid="server-photos" style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {state.photos.map((p, idx) => {
-              const isCover = state.coverPhotoId === p.id;
+          {state.pageError && <ErrorBox title="Ошибка" message={state.pageError} />}
 
-              const classes = [
-                'dp-item',
-                draggingIndex === idx ? 'is-dragging' : '',
-                dropTargetIndex === idx && draggingIndex !== null && draggingIndex !== idx ? 'is-drop-target' : '',
-                settleIndex === idx ? 'is-settling' : ''
-              ]
-                .filter(Boolean)
-                .join(' ');
+          {waitingForOnline && (
+            <div data-testid="waiting-for-online" className="dp-flash">
+              Нет сети — сохраним при появлении соединения.
+            </div>
+          )}
 
-              return (
-                <div
-                  key={p.id}
-                  data-testid={`server-photo-${p.id}`}
-                  data-photo-id={p.id}
-                  data-dp-index={idx}
-                  draggable
-                  onDragStart={(e) => onDragStart(e, idx)}
-                  onDragOver={onDragOver}
-                  onDrop={(e) => onDrop(e, idx)}
-                  onDragEnd={onDragEnd}
-                  onPointerDown={(e) => onPointerDownCard(e, idx)}
-                  onPointerMove={onPointerMoveCard}
-                  onPointerUp={onPointerUpCard}
-                  onPointerCancel={onPointerCancelCard}
-                  className={classes}
-                  style={{
-                    width: 160,
-                    borderRadius: 10,
-                    overflow: 'hidden',
-                    border: isCover ? '2px solid #111' : '1px solid #ddd',
-                    background: '#fff',
-                    touchAction: 'none'
+          {showSaved && !waitingForOnline && !isSavingOrder && !orderSaveError && (
+            <div data-testid="order-saved" className="dp-flash">
+              Saved ✓
+            </div>
+          )}
+
+          {isSavingOrder && !waitingForOnline && (
+            <div data-testid="saving-indicator" className="dp-flash">
+              Сохраняю порядок…
+            </div>
+          )}
+
+          {orderSaveError && !isSavingOrder && !waitingForOnline && (
+            <div data-testid="order-save-error" style={{ marginBottom: 10 }}>
+              <ErrorBox title="Не удалось сохранить порядок" message={orderSaveError} />
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  data-testid="persist-order-retry"
+                  onClick={() => {
+                    const started = orderPersister.retryNow();
+                    if (!started) setOrderSaveError(null);
                   }}
                 >
-                  <div style={{ position: 'relative', width: '100%', height: 90 }}>
-                    <img
-                      src={p.url}
-                      alt=""
-                      style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
-                    />
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
 
-                    {isCover && (
-                      <span
-                        data-testid="cover-badge"
-                        style={{
-                          position: 'absolute',
-                          top: 6,
-                          left: 6,
-                          background: '#111',
-                          color: '#fff',
-                          fontSize: 12,
-                          padding: '2px 8px',
-                          borderRadius: 999
-                        }}
-                      >
-                        Cover
-                      </span>
+          {/* Keep input in DOM always (tests rely on it); disable when no access */}
+          <div className="dp-upload">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*"
+              data-testid="photo-file"
+              disabled={!canUpload}
+              onChange={(e) => void onFilesSelected(e.target.files)}
+            />
+            <div className="dp-upload__hint">Можно выбрать несколько файлов. Поддерживаются изображения.</div>
+          </div>
+
+          {!hasAnyServerPhotos && !hasAnyUploads && (
+            <div className="card dp-empty">
+              <div className="dp-empty__title">Фотографий пока нет</div>
+              <div className="dp-empty__text muted">
+                Добавьте хотя бы одно фото, чтобы продолжить.
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button type="button" className="btn" onClick={openFilePicker} disabled={!canUpload}>
+                  Добавить фото
+                </button>
+              </div>
+            </div>
+          )}
+
+          {hasAnyUploads && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {state.uploads.map((u) => (
+                <div
+                  key={u.localId}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '96px 1fr auto',
+                    alignItems: 'center',
+                    gap: 12,
+                    border: '1px solid #ddd',
+                    borderRadius: 8,
+                    padding: 10
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 96,
+                      height: 72,
+                      borderRadius: 6,
+                      overflow: 'hidden',
+                      background: '#f5f5f5',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <img src={u.previewUrl} alt={u.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, wordBreak: 'break-word' }}>{u.file.name}</div>
+
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>
+                      {u.status === 'queued' && 'В очереди'}
+                      {u.status === 'uploading' && 'Загрузка…'}
+                      {u.status === 'success' && 'Загружено ✅'}
+                      {u.status === 'error' && `Ошибка: ${u.errorMessage ?? 'Upload failed'}`}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <progress value={u.progress} max={100} style={{ width: '100%' }} />
+                      <div style={{ width: 46, textAlign: 'right', fontSize: 12 }}>{Math.round(u.progress)}%</div>
+                    </div>
+
+                    {u.status === 'error' && (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" onClick={() => retryUpload(u.localId)} disabled={!canUpload}>
+                          Retry
+                        </button>
+                        <button type="button" onClick={() => removeUpload(u.localId)}>
+                          Remove
+                        </button>
+                      </div>
                     )}
                   </div>
 
-                  <div style={{ display: 'grid', gap: 6, padding: 8 }}>
-                    <button type="button" onClick={() => setCover(p.id)} disabled={isCover} style={{ width: '100%' }}>
-                      {isCover ? 'Cover' : 'Make cover'}
+                  <div>
+                    <button type="button" onClick={() => removeUpload(u.localId)} disabled={u.status === 'uploading'}>
+                      ✕
                     </button>
-
-                    {/* fallback reorder buttons for tests + accessibility */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                      <button
-                        type="button"
-                        data-testid={`move-up-${p.id}`}
-                        onClick={() => moveUp(p.id)}
-                        disabled={idx === 0}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`move-down-${p.id}`}
-                        onClick={() => moveDown(p.id)}
-                        disabled={idx === state.photos.length - 1}
-                      >
-                        ↓
-                      </button>
-                    </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-            Mobile: long-press a photo, then drag to reorder.
-          </div>
+          {state.photos.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <h2 className="dp-sectionTitle">Загруженные фото</h2>
+
+              <div data-testid="server-photos" className="dp-serverPhotos">
+                {state.photos.map((p, idx) => {
+                  const isCover = state.coverPhotoId === p.id;
+
+                  const classes = [
+                    'dp-item',
+                    draggingIndex === idx ? 'is-dragging' : '',
+                    dropTargetIndex === idx && draggingIndex !== null && draggingIndex !== idx ? 'is-drop-target' : '',
+                    settleIndex === idx ? 'is-settling' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
+
+                  return (
+                    <div
+                      key={p.id}
+                      data-testid={`server-photo-${p.id}`}
+                      data-photo-id={p.id}
+                      data-dp-index={idx}
+                      draggable
+                      onDragStart={(e) => onDragStart(e, idx)}
+                      onDragOver={onDragOver}
+                      onDrop={(e) => onDrop(e, idx)}
+                      onDragEnd={onDragEnd}
+                      onPointerDown={(e) => onPointerDownCard(e, idx)}
+                      onPointerMove={onPointerMoveCard}
+                      onPointerUp={onPointerUpCard}
+                      onPointerCancel={onPointerCancelCard}
+                      className={classes}
+                      style={{
+                        width: 160,
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        border: isCover ? '2px solid #111' : '1px solid #ddd',
+                        background: '#fff',
+                        touchAction: 'none'
+                      }}
+                    >
+                      <div style={{ position: 'relative', width: '100%', height: 90 }}>
+                        <img
+                          src={p.url}
+                          alt=""
+                          style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
+                        />
+
+                        {isCover && (
+                          <span
+                            data-testid="cover-badge"
+                            style={{
+                              position: 'absolute',
+                              top: 6,
+                              left: 6,
+                              background: '#111',
+                              color: '#fff',
+                              fontSize: 12,
+                              padding: '2px 8px',
+                              borderRadius: 999
+                            }}
+                          >
+                            Cover
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'grid', gap: 6, padding: 8 }}>
+                        <button type="button" onClick={() => setCover(p.id)} disabled={isCover} style={{ width: '100%' }}>
+                          {isCover ? 'Cover' : 'Make cover'}
+                        </button>
+
+                        {/* fallback reorder buttons for tests + accessibility */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                          <button
+                            type="button"
+                            data-testid={`move-up-${p.id}`}
+                            onClick={() => moveUp(p.id)}
+                            disabled={idx === 0}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`move-down-${p.id}`}
+                            onClick={() => moveDown(p.id)}
+                            disabled={idx === state.photos.length - 1}
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                Mobile: long-press a photo, then drag to reorder.
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
