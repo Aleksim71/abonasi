@@ -6,8 +6,10 @@ import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 import { useLocationStore } from '../store/location.store';
 
+import './draftCreate.css';
+
 // -----------------------------
-// helpers
+// helpers (оставляем — у тебя store мог менять форму)
 // -----------------------------
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -24,7 +26,6 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string | null
 function extractLocationIdFromStore(store: unknown): string | null {
   if (!isRecord(store)) return null;
 
-  // 1) direct id fields
   const direct = pickString(store, [
     'locationId',
     'location_id',
@@ -33,7 +34,6 @@ function extractLocationIdFromStore(store: unknown): string | null {
   ]);
   if (direct) return direct;
 
-  // 2) nested object candidates
   const nestedCandidates: unknown[] = [
     store.selectedLocation,
     store.currentLocation,
@@ -48,7 +48,6 @@ function extractLocationIdFromStore(store: unknown): string | null {
     if (id) return id;
   }
 
-  // 3) sometimes selectedId/currentId
   const selectedId = pickString(store, ['selectedId', 'currentId']);
   if (selectedId) return selectedId;
 
@@ -63,15 +62,15 @@ export function DraftCreatePage() {
 
   // Zustand store returns whole state
   const locationStore = useLocationStore() as unknown;
-  const locationId = useMemo(
-    () => extractLocationIdFromStore(locationStore),
-    [locationStore]
-  );
+  const locationId = useMemo(() => extractLocationIdFromStore(locationStore), [locationStore]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const canSubmit = Boolean(locationId) && Boolean(title.trim()) && !loading;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -81,17 +80,23 @@ export function DraftCreatePage() {
       return;
     }
 
+    if (!title.trim()) {
+      setError('Введите заголовок');
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
     try {
       const ad = await AdsApi.createDraft({
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         locationId
       });
 
-      nav(`/ads/${ad.id}/photos`);
+      // ✅ router.tsx: 'draft/:id/photos'
+      nav(`/draft/${ad.id}/photos`, { replace: true });
     } catch (e) {
       if (e instanceof ApiError) {
         setError(e.message || 'Не удалось создать черновик');
@@ -104,37 +109,49 @@ export function DraftCreatePage() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1>Новое объявление</h1>
+    <div className="draftcreate">
+      <div className="card draftcreate__card">
+        <h2 className="draftcreate__title">Новое объявление</h2>
+        <p className="muted small draftcreate__hint">
+          Заполните минимум — дальше добавим фото.
+        </p>
 
-      {error && <ErrorBox title="Ошибка" message={error} />}
+        {error && <ErrorBox title="Ошибка" message={error} />}
 
-      <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12, maxWidth: 480 }}>
-        <input
-          placeholder="Заголовок"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          disabled={loading}
-        />
-
-        <textarea
-          placeholder="Описание"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          disabled={loading}
-          rows={5}
-        />
-
-        <button type="submit" disabled={loading || !locationId}>
-          {loading ? <Loading /> : 'Продолжить'}
-        </button>
-
-        {!locationId && (
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Сначала выберите локацию
+        <form onSubmit={onSubmit} className="draftcreate__form">
+          <div className="draftcreate__field">
+            <div className="draftcreate__label">Заголовок</div>
+            <input
+              className="input"
+              placeholder="Например: Продам детскую коляску"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={loading}
+              required
+            />
           </div>
-        )}
-      </form>
+
+          <div className="draftcreate__field">
+            <div className="draftcreate__label">Описание</div>
+            <textarea
+              className="input"
+              placeholder="Коротко: состояние, комплектация, нюансы"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              disabled={loading}
+              rows={5}
+            />
+          </div>
+
+          {!locationId && <div className="draftcreate__note">Сначала выберите локацию</div>}
+
+          <div className="draftcreate__actions">
+            <button className="btn draftcreate__submit" type="submit" disabled={!canSubmit}>
+              {loading ? <Loading /> : 'Продолжить'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
