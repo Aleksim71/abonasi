@@ -1,0 +1,178 @@
+.feed {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.feed__top {
+  display: grid;
+  gap: 10px;
+}
+
+.feed__titleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.feed__title {
+  margin: 0;
+}
+
+.feed__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed__metaLabel {
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+.feed__metaValue {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.feed__metaLink {
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.feed__metaLink:hover {
+  text-decoration: underline;
+}
+
+.feed__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feed__btn {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: #fff;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.feed__btn--primary {
+  font-weight: 600;
+}
+
+.feed__panel {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.feed__panelTitle {
+  margin: 0;
+}
+
+.feed__panelActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feed__muted {
+  margin: 0;
+  opacity: 0.78;
+}
+
+.feed__grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.feed__card {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.feed__cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.feed__cardTitle {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed__badge {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.feed__price {
+  font-weight: 600;
+}
+
+.feed__thumb {
+  border-radius: 12px;
+  border: 1px dashed rgba(0, 0, 0, 0.22);
+  min-height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+}
+
+.feed__thumbInner {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+}
+
+.feed__thumbText {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.feed__thumbPath {
+  font-size: 12px;
+  opacity: 0.72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed__thumbEmpty {
+  opacity: 0.72;
+}
+
+.feed__smallMuted {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.feed__cardFooter {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.feed__link {
+  text-decoration: none;
+}
+
+.feed__link:hover {
+  text-decoration: underline;
+}
