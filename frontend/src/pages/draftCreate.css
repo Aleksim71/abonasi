@@ -1,0 +1,68 @@
+/* DraftCreate — MVP styling (Abonasi) */
+
+.draftcreate {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.draftcreate__card {
+  width: 100%;
+  max-width: 560px;
+  padding: 14px;
+  box-sizing: border-box;
+}
+
+.draftcreate__title {
+  margin: 0 0 6px 0;
+}
+
+.draftcreate__hint {
+  margin: 0 0 12px 0;
+}
+
+.draftcreate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.draftcreate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.draftcreate__label {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.draftcreate .input,
+.draftcreate textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.draftcreate__actions {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.draftcreate__submit {
+  width: 100%;
+}
+
+.draftcreate__note {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .draftcreate__card {
+    padding: 14px;
+  }
+}
