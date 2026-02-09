@@ -75,9 +75,7 @@ async function stopAdTx({ userId, adId }) {
   } catch (err) {
     try {
       await client.query('ROLLBACK');
-    } catch {
-      /* intentionally ignored */
-    }
+    } catch { /* intentionally ignored */ }
 
     // preserve special-case behavior
     if (err && err.code === '45000') {
