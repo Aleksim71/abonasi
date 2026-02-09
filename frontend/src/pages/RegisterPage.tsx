@@ -7,6 +7,8 @@ import { Loading } from '../ui/Loading';
 import { useAuth } from '../store/auth.store';
 import { useLocationStore } from '../store/location.store';
 
+import './auth.css';
+
 export function RegisterPage() {
   const nav = useNavigate();
   const { setAuth } = useAuth();
@@ -42,55 +44,59 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="card">
-      <h2>Register</h2>
-      <p className="muted small">
-        Have an account? <Link to="/login">Login</Link>
-      </p>
+    <div className="auth">
+      <div className="card auth__card">
+        <h2 className="auth__title">Register</h2>
+        <p className="muted small auth__hint">
+          Have an account? <Link to="/login">Login</Link>
+        </p>
 
-      {error && <ErrorBox message={error} />}
+        {error && <ErrorBox message={error} />}
 
-      <form onSubmit={onSubmit} className="form">
-        <label className="label">
-          Name
-          <input
-            className="input"
-            type="text"
-            autoComplete="name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-        </label>
+        <form onSubmit={onSubmit} className="auth__form">
+          <div className="auth__field">
+            <div className="auth__label">Name</div>
+            <input
+              className="input"
+              type="text"
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
 
-        <label className="label">
-          Email
-          <input
-            className="input"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
+          <div className="auth__field">
+            <div className="auth__label">Email</div>
+            <input
+              className="input"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
 
-        <label className="label">
-          Password
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
+          <div className="auth__field">
+            <div className="auth__label">Password</div>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
 
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? <Loading /> : 'Create account'}
-        </button>
-      </form>
+          <div className="auth__actions">
+            <button className="btn auth__submit" type="submit" disabled={loading}>
+              {loading ? <Loading /> : 'Create account'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
