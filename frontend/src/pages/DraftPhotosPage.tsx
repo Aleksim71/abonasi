@@ -68,6 +68,9 @@ function extractFirstPhotoFromResponse(res: unknown): unknown {
 
     const items = res.items;
     if (Array.isArray(items)) return items[0];
+
+    const data = res.data;
+    if (isRecord(data) && Array.isArray(data.photos)) return data.photos[0];
   }
 
   return undefined;
@@ -81,7 +84,6 @@ function getClosestDpIndex(target: EventTarget | null): number | null {
 }
 
 function getDpIndexFromPoint(clientX: number, clientY: number): number | null {
-  // Vitest/jsdom tests typically stub document.elementFromPoint to support this logic.
   const el = document.elementFromPoint?.(clientX, clientY) as HTMLElement | null;
   if (!el) return null;
 
@@ -103,24 +105,24 @@ export function DraftPhotosPage() {
   const objectUrlsRef = useRef<Map<string, string>>(new Map());
   const canUpload = useMemo(() => Boolean(adId) && Boolean(token), [adId, token]);
 
-  // file input ref for CTA buttons (keep input in DOM for tests)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
 
-  // B2: UX around debounced persist order
+  // "Done" must not require Router context (tests render without Router).
+  const goMyAds = useCallback(() => {
+    window.location.assign('/my-ads');
+  }, []);
+
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
 
-  // B3.3: offline-aware UI
   const [waitingForOnline, setWaitingForOnline] = useState(false);
 
-  // B4: compact "Saved ✓" indicator
   const [showSaved, setShowSaved] = useState(false);
   const savedTimerRef = useRef<number | null>(null);
 
-  // B6: reorder micro-feedback (native drag'n'drop)
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const dropTargetIndexRef = useRef<number | null>(null);
@@ -156,7 +158,6 @@ export function DraftPhotosPage() {
     return () => clearSettleTimer();
   }, [clearSettleTimer]);
 
-  // B4.2: strict priority refs to avoid "Saved" popping later
   const waitingForOnlineRef = useRef(false);
   const isSavingOrderRef = useRef(false);
   const orderSaveErrorRef = useRef<string | null>(null);
@@ -186,7 +187,6 @@ export function DraftPhotosPage() {
   }, [clearSavedTimer]);
 
   const canShowSavedNow = useCallback(() => {
-    // priority: waitingForOnline > saving > error > saved
     if (waitingForOnlineRef.current) return false;
     if (isSavingOrderRef.current) return false;
     if (orderSaveErrorRef.current) return false;
@@ -194,7 +194,6 @@ export function DraftPhotosPage() {
   }, []);
 
   const showSavedIndicator = useCallback(() => {
-    // B4.2: strict priority — if we can't show now, do NOT schedule it later
     if (!canShowSavedNow()) return;
 
     clearSavedTimer();
@@ -249,7 +248,6 @@ export function DraftPhotosPage() {
     return () => orderPersister.cancel();
   }, [orderPersister]);
 
-  // schedule persist when order changes (only server photos)
   const orderKey = useMemo(() => state.photos.map((p) => p.id).join('|'), [state.photos]);
 
   useEffect(() => {
@@ -381,12 +379,8 @@ export function DraftPhotosPage() {
     (fromIndex: number, toIndex: number) => {
       if (fromIndex === toIndex) return;
 
-      // B4: any new reorder hides Saved immediately
       hideSavedIndicator();
-
-      // optimistic UX: any new reorder hides previous error
       setOrderSaveError(null);
-      // also clear calm offline banner on new reorder attempt
       setWaitingForOnline(false);
 
       dispatch({ type: 'MOVE_PHOTO', payload: { fromIndex, toIndex } });
@@ -394,7 +388,6 @@ export function DraftPhotosPage() {
     [hideSavedIndicator]
   );
 
-  // HTML5 DnD
   const onDragStart = useCallback(
     (e: React.DragEvent<HTMLDivElement>, fromIndex: number) => {
       setDraggingIndex(fromIndex);
@@ -456,7 +449,6 @@ export function DraftPhotosPage() {
     setDropTargetIndex(null);
   }, [triggerSettle]);
 
-  // B8: touch long-press reorder (Pointer Events)
   const longPressMs = 350;
   const touchPressTimerRef = useRef<number | null>(null);
   const touchActiveRef = useRef(false);
@@ -604,15 +596,24 @@ export function DraftPhotosPage() {
           <div className="dp-header">
             <div>
               <h1 className="dp-title">Фотографии</h1>
-              <p className="dp-subtitle muted small">
-                Добавьте фото — первое будет обложкой.
-              </p>
+              <p className="dp-subtitle muted small">Добавьте фото — первое будет обложкой.</p>
             </div>
 
             <div className="dp-actions">
               <button type="button" className="btn" onClick={openFilePicker} disabled={!canUpload}>
                 Добавить фото
               </button>
+
+              <button
+                type="button"
+                className="btn"
+                onClick={goMyAds}
+                disabled={!hasAnyServerPhotos}
+                title={!hasAnyServerPhotos ? 'Сначала добавьте хотя бы одно фото' : 'Перейти в мои объявления'}
+              >
+                Готово → Мои объявления
+              </button>
+
               <button type="button" className="btn" disabled>
                 Опубликовать
               </button>
@@ -659,7 +660,6 @@ export function DraftPhotosPage() {
             </div>
           )}
 
-          {/* Keep input in DOM always (tests rely on it); disable when no access */}
           <div className="dp-upload">
             <input
               ref={fileInputRef}
@@ -676,9 +676,7 @@ export function DraftPhotosPage() {
           {!hasAnyServerPhotos && !hasAnyUploads && (
             <div className="card dp-empty">
               <div className="dp-empty__title">Фотографий пока нет</div>
-              <div className="dp-empty__text muted">
-                Добавьте хотя бы одно фото, чтобы продолжить.
-              </div>
+              <div className="dp-empty__text muted">Добавьте хотя бы одно фото, чтобы продолжить.</div>
               <div style={{ marginTop: 12 }}>
                 <button type="button" className="btn" onClick={openFilePicker} disabled={!canUpload}>
                   Добавить фото
@@ -797,11 +795,7 @@ export function DraftPhotosPage() {
                       }}
                     >
                       <div style={{ position: 'relative', width: '100%', height: 90 }}>
-                        <img
-                          src={p.url}
-                          alt=""
-                          style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
-                        />
+                        <img src={p.url} alt="" style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }} />
 
                         {isCover && (
                           <span
@@ -827,14 +821,8 @@ export function DraftPhotosPage() {
                           {isCover ? 'Cover' : 'Make cover'}
                         </button>
 
-                        {/* fallback reorder buttons for tests + accessibility */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                          <button
-                            type="button"
-                            data-testid={`move-up-${p.id}`}
-                            onClick={() => moveUp(p.id)}
-                            disabled={idx === 0}
-                          >
+                          <button type="button" data-testid={`move-up-${p.id}`} onClick={() => moveUp(p.id)} disabled={idx === 0}>
                             ↑
                           </button>
                           <button
