@@ -1,0 +1,101 @@
+/* DraftPhotos — MVP page layout polish (keeps existing reorder/a11y/mobile CSS) */
+
+.dp-page {
+  padding: 16px;
+}
+
+.dp-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.dp-container {
+  width: 100%;
+  max-width: 980px;
+}
+
+.dp-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dp-title {
+  margin: 0;
+}
+
+.dp-subtitle {
+  margin: 6px 0 0;
+}
+
+.dp-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.dp-actions .btn {
+  white-space: nowrap;
+}
+
+.dp-flash {
+  margin-bottom: 10px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.dp-upload {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dp-upload__hint {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.dp-empty {
+  padding: 18px;
+  text-align: center;
+}
+
+.dp-empty__title {
+  font-weight: 600;
+}
+
+.dp-empty__text {
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+.dp-sectionTitle {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.dp-serverPhotos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .dp-header {
+    flex-direction: column;
+  }
+
+  .dp-actions {
+    justify-content: stretch;
+  }
+
+  .dp-actions .btn {
+    width: 100%;
+  }
+}
