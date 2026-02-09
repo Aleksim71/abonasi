@@ -1,0 +1,85 @@
+/* MyAds — MVP styling (Abonasi)
+   Утилитарно, спокойно, без маркетинга */
+
+.myads {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.myads__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.myads__title {
+  margin: 0;
+}
+
+.myads__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.myads__card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.myads__card-title {
+  font-weight: 600;
+}
+
+.myads__card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.myads__status {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.myads__status--draft {
+  color: var(--muted, #777);
+}
+
+.myads__status--active {
+  color: #1a7f37; /* спокойно-зелёный */
+}
+
+.myads__status--stopped {
+  color: #b42318; /* мягкий красный */
+}
+
+.myads__empty {
+  text-align: center;
+  padding: 20px;
+}
+
+.myads__empty-title {
+  font-weight: 600;
+}
+
+.myads__empty-text {
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+.myads__retry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .myads__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
