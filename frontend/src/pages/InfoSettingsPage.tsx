@@ -3,73 +3,19 @@
 
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth.store';
+import { useLocationStore } from '../store/location.store';
 import './InfoSettingsPage.css';
 
-function tryParseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
+type LocationStoreShape = {
+  selectedId: string | null;
 
-function readLocationLabelFromLocalStorage(): string | null {
-  // ✅ Добавь сюда свой ключ, если у тебя он другой.
-  const keysToTry = [
-    'location', // часто кладут объект/строку сюда
-    'selectedLocation',
-    'selected_location',
-    'locationLabel',
-    'location_label',
-    'abonasi.location',
-    'abonasi_location',
-    'abonasi.location.selected',
-  ];
-
-  for (const key of keysToTry) {
-    const raw = localStorage.getItem(key);
-    if (!raw) continue;
-
-    // 1) Если это уже “нормальная” строка (не JSON), вернём как label
-    const trimmed = raw.trim();
-    const looksLikeJson =
-      trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"');
-
-    if (!looksLikeJson) {
-      // Пример: "Munich" или "Germany/Munich"
-      return trimmed;
-    }
-
-    // 2) Если JSON — пытаемся распарсить и достать человекочитаемое поле
-    const parsed = tryParseJson(trimmed);
-
-    // Строка в JSON: "Munich"
-    if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
-
-    // Объект: { label/name/city/title/path: ... }
-    if (parsed && typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      const candidates = ['label', 'name', 'city', 'title', 'path'];
-
-      for (const c of candidates) {
-        const v = obj[c];
-        if (typeof v === 'string' && v.trim()) return v.trim();
-      }
-
-      // Иногда кладут: { location: { label: ... } }
-      const nested = obj.location;
-      if (nested && typeof nested === 'object') {
-        const n = nested as Record<string, unknown>;
-        for (const c of candidates) {
-          const v = n[c];
-          if (typeof v === 'string' && v.trim()) return v.trim();
-        }
-      }
-    }
-  }
-
-  return null;
-}
+  // Если в сторе есть готовая “человекочитаемая” строка — используем её.
+  // Если этих полей нет в реальном сторе — TypeScript это не сломает,
+  // потому что мы читаем их через селектор с приведением к этому shape
+  // (но без any).
+  selectedLabel?: string | null;
+  selectedName?: string | null;
+};
 
 export function InfoSettingsPage() {
   const nav = useNavigate();
@@ -77,17 +23,22 @@ export function InfoSettingsPage() {
 
   const isAuthed = Boolean(token);
 
-  // MVP: читаем локацию один раз на рендер.
-  // Если у тебя смена локации происходит без перезагрузки страницы,
-  // позже сделаем подписку на стор/событие — но для MVP достаточно.
-  const locationLabel = readLocationLabelFromLocalStorage();
+  // ✅ Источник истины как в RequireLocation
+  const selectedId = useLocationStore((s) => (s as unknown as LocationStoreShape).selectedId);
+
+  // ✅ Пытаемся взять “готовую” подпись, если стор её предоставляет
+  const selectedLabel = useLocationStore((s) => {
+    const st = s as unknown as LocationStoreShape;
+    return st.selectedLabel ?? st.selectedName ?? null;
+  });
 
   function onLogout() {
-    // MVP: client-side logout (как в Layout)
     localStorage.removeItem('token');
     clearAuth();
     nav('/login', { replace: true });
   }
+
+  const locationText = selectedId ? (selectedLabel ?? selectedId) : 'Не выбрана';
 
   return (
     <div className="info-page">
@@ -99,7 +50,6 @@ export function InfoSettingsPage() {
       </header>
 
       <main className="info-content">
-        {/* О ПРОЕКТЕ */}
         <section className="info-section">
           <h2>О Abonasi</h2>
           <p>
@@ -115,12 +65,11 @@ export function InfoSettingsPage() {
             </li>
             <li>
               <span>Локация</span>
-              <span>{locationLabel ?? 'Не выбрана'}</span>
+              <span>{locationText}</span>
             </li>
           </ul>
         </section>
 
-        {/* КАК ЭТО РАБОТАЕТ */}
         <section className="info-section">
           <h2>Как это работает</h2>
           <ul className="info-list">
@@ -130,7 +79,6 @@ export function InfoSettingsPage() {
           </ul>
         </section>
 
-        {/* ЮРИДИЧЕСКАЯ ИНФОРМАЦИЯ */}
         <section className="info-section">
           <h2>Правовая информация</h2>
           <ul className="info-links">
@@ -146,7 +94,6 @@ export function InfoSettingsPage() {
           </ul>
         </section>
 
-        {/* КОНТАКТЫ */}
         <section className="info-section">
           <h2>Контакты</h2>
           <ul className="info-links">
@@ -161,7 +108,6 @@ export function InfoSettingsPage() {
           </ul>
         </section>
 
-        {/* ACCOUNT / ГОСТЬ */}
         {isAuthed ? (
           <section className="info-section info-account">
             <h2>Аккаунт</h2>
