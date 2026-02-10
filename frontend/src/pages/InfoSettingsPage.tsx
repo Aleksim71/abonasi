@@ -2,37 +2,97 @@
 // Экран "Инфо" — MVP (публичный, guest vs auth)
 
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../store/auth.store';
 import './InfoSettingsPage.css';
 
-// MVP-контракт: заменить на реальный auth-store при следующем шаге
-type Viewer = {
-  isAuth: boolean;
-  email?: string;
-  location?: string;
-};
+function tryParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
 
-// TEMP: заменить на реальный источник
-const viewer: Viewer = {
-  isAuth: false,
-  // email: 'user@mail.de',
-  // location: 'Мюнхен',
-};
+function readLocationLabelFromLocalStorage(): string | null {
+  // ✅ Добавь сюда свой ключ, если у тебя он другой.
+  const keysToTry = [
+    'location', // часто кладут объект/строку сюда
+    'selectedLocation',
+    'selected_location',
+    'locationLabel',
+    'location_label',
+    'abonasi.location',
+    'abonasi_location',
+    'abonasi.location.selected',
+  ];
+
+  for (const key of keysToTry) {
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+
+    // 1) Если это уже “нормальная” строка (не JSON), вернём как label
+    const trimmed = raw.trim();
+    const looksLikeJson =
+      trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"');
+
+    if (!looksLikeJson) {
+      // Пример: "Munich" или "Germany/Munich"
+      return trimmed;
+    }
+
+    // 2) Если JSON — пытаемся распарсить и достать человекочитаемое поле
+    const parsed = tryParseJson(trimmed);
+
+    // Строка в JSON: "Munich"
+    if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
+
+    // Объект: { label/name/city/title/path: ... }
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      const candidates = ['label', 'name', 'city', 'title', 'path'];
+
+      for (const c of candidates) {
+        const v = obj[c];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+
+      // Иногда кладут: { location: { label: ... } }
+      const nested = obj.location;
+      if (nested && typeof nested === 'object') {
+        const n = nested as Record<string, unknown>;
+        for (const c of candidates) {
+          const v = n[c];
+          if (typeof v === 'string' && v.trim()) return v.trim();
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export function InfoSettingsPage() {
-  const navigate = useNavigate();
+  const nav = useNavigate();
+  const { token, clearAuth } = useAuth();
 
-  function handleLogout() {
-    navigate('/login');
+  const isAuthed = Boolean(token);
+
+  // MVP: читаем локацию один раз на рендер.
+  // Если у тебя смена локации происходит без перезагрузки страницы,
+  // позже сделаем подписку на стор/событие — но для MVP достаточно.
+  const locationLabel = readLocationLabelFromLocalStorage();
+
+  function onLogout() {
+    // MVP: client-side logout (как в Layout)
+    localStorage.removeItem('token');
+    clearAuth();
+    nav('/login', { replace: true });
   }
 
   return (
     <div className="info-page">
       <header className="info-header">
-        <button
-          className="info-back"
-          type="button"
-          onClick={() => navigate(-1)}
-        >
+        <button className="info-back" type="button" onClick={() => nav(-1)}>
           ← Назад
         </button>
         <h1 className="info-title">Инфо</h1>
@@ -55,7 +115,7 @@ export function InfoSettingsPage() {
             </li>
             <li>
               <span>Локация</span>
-              <span>{viewer.location ?? 'Не выбрана'}</span>
+              <span>{locationLabel ?? 'Не выбрана'}</span>
             </li>
           </ul>
         </section>
@@ -91,9 +151,7 @@ export function InfoSettingsPage() {
           <h2>Контакты</h2>
           <ul className="info-links">
             <li>
-              <a href="mailto:support@abonasi.app">
-                support@abonasi.app
-              </a>
+              <a href="mailto:support@abonasi.app">support@abonasi.app</a>
             </li>
             <li>
               <a href="mailto:support@abonasi.app?subject=Abonasi%20bug%20report">
@@ -104,39 +162,22 @@ export function InfoSettingsPage() {
         </section>
 
         {/* ACCOUNT / ГОСТЬ */}
-        {viewer.isAuth ? (
+        {isAuthed ? (
           <section className="info-section info-account">
             <h2>Аккаунт</h2>
-
-            <ul className="info-meta">
-              <li>
-                <span>Email</span>
-                <span>{viewer.email}</span>
-              </li>
-              <li>
-                <span>Локация</span>
-                <span>{viewer.location ?? 'Не выбрана'}</span>
-              </li>
-            </ul>
 
             <div className="info-actions">
               <Link className="btn secondary" to="/my-ads">
                 Мои объявления
               </Link>
-              <button
-                className="btn danger"
-                type="button"
-                onClick={handleLogout}
-              >
+              <button className="btn danger" type="button" onClick={onLogout}>
                 Выйти
               </button>
             </div>
           </section>
         ) : (
           <section className="info-section info-guest">
-            <p className="info-muted">
-              Вы просматриваете приложение как гость.
-            </p>
+            <p className="info-muted">Вы просматриваете приложение как гость.</p>
 
             <div className="info-actions">
               <Link className="btn primary" to="/login">
