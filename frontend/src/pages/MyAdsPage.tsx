@@ -78,7 +78,6 @@ export function MyAdsPage() {
 
       {!loading && !error && (
         <div className="myads__grid">
-          {/* Баланс */}
           <div className="card myads__card">
             <div className="myads__card-meta">
               <div className="myads__card-title">Баланс</div>
@@ -87,7 +86,6 @@ export function MyAdsPage() {
             <div className="myads__balance muted small">0,00 €</div>
           </div>
 
-          {/* Объявления: счётчики */}
           <div className="card myads__card">
             <div className="myads__card-meta">
               <div className="myads__card-title">Объявления</div>
