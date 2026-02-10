@@ -58,7 +58,7 @@ export function MyAdsPage() {
       <div className="myads__header">
         <h2 className="myads__title">Мои объявления</h2>
 
-        <Link className="btn" to="/draft/new" style={{ textDecoration: 'none' }}>
+        <Link className="btn" to="/draft/new">
           + Создать объявление
         </Link>
       </div>
@@ -84,9 +84,7 @@ export function MyAdsPage() {
               <div className="myads__card-title">Баланс</div>
             </div>
 
-            <div className="small muted" style={{ marginTop: 8 }}>
-              0,00 €
-            </div>
+            <div className="myads__balance muted small">0,00 €</div>
           </div>
 
           {/* Объявления: счётчики */}
@@ -95,19 +93,19 @@ export function MyAdsPage() {
               <div className="myads__card-title">Объявления</div>
             </div>
 
-            <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <div className="myads__counters">
+              <div className="myads__row">
                 <span className="small muted">Опубликовано</span>
                 <strong>{counts.published}</strong>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <div className="myads__row">
                 <span className="small muted">Черновики</span>
                 <strong>{counts.drafts}</strong>
               </div>
 
               {ads.length === 0 && (
-                <div className="small muted" style={{ marginTop: 6 }}>
+                <div className="myads__hint small muted">
                   У вас пока нет объявлений. Нажмите «Создать объявление», чтобы начать.
                 </div>
               )}
