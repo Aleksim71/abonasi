@@ -1,0 +1,87 @@
+.l-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.l-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+}
+
+.l-brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: inherit;
+}
+
+.l-header-right {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.l-icon-btn {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.l-menu-btn {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.l-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+}
+
+.l-menu-item {
+  text-align: left;
+  text-decoration: none;
+  color: inherit;
+  border: 0;
+  background: transparent;
+  padding: 10px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.l-menu-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.l-menu-item-danger {
+  color: #b00020;
+}
+
+.l-main {
+  flex: 1;
+  padding: 16px;
+}
