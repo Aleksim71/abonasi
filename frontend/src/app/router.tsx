@@ -19,6 +19,9 @@ import { SectionsPage } from '../pages/SectionsPage/SectionsPage';
 import { SubscriptionsPage } from '../pages/SubscriptionsPage/SubscriptionsPage';
 import { SettingsPage } from '../pages/SettingsPage/SettingsPage';
 
+// Info / Settings (MVP)
+import { InfoSettingsPage } from '../pages/InfoSettingsPage';
+
 // Static pages
 import { AboutPage } from '../pages/AboutPage/AboutPage';
 import { RulesPage } from '../pages/RulesPage/RulesPage';
@@ -37,6 +40,9 @@ export const router = createBrowserRouter([
 
       // ---- конфиг-хаб (публично) ----
       { path: 'menu', element: <MenuPage /> },
+
+      // ---- Info / Settings (публично, guest vs auth внутри) ----
+      { path: 'info', element: <InfoSettingsPage /> },
 
       // ---- конфиг-экраны (публично) ----
       { path: 'locations', element: <LocationSelectPage /> },
