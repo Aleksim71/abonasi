@@ -63,6 +63,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
     nav('/login', { replace: true });
   }
 
+  function onAuthIconClick() {
+    if (isAuthed) {
+      onLogout();
+      return;
+    }
+    nav('/login');
+  }
+
   return (
     <div className="l-page">
       <header className="l-header" aria-label="Верхняя панель">
@@ -71,6 +79,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </Link>
 
         <div className="l-header-right">
+          <button
+            type="button"
+            className="l-icon-btn"
+            aria-label={isAuthed ? 'Выйти' : 'Войти'}
+            title={isAuthed ? 'Выйти' : 'Войти'}
+            onClick={onAuthIconClick}
+          >
+            {isAuthed ? '⎋' : '⏻'}
+          </button>
+
           <button
             ref={btnRef}
             type="button"
