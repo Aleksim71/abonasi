@@ -23,7 +23,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const items: MenuItem[] = useMemo(
     () => [
+      // /info — инфо-экран (публичный, guest + auth)
+      { label: 'Инфо', to: '/info' },
+
+      // существующий конфиг-хаб
       { label: 'Настройки', to: '/menu' },
+
       { label: 'Правила', to: '/rules' },
       { label: 'О проекте', to: '/about' },
       { label: 'Для партнёров', to: '/partners' }
@@ -103,16 +108,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {open && (
             <div ref={menuRef} className="l-menu" role="menu" aria-label="Меню">
-              {items
-                .filter((it) => (it.requireAuth ? isAuthed : true))
-                .map((it) => (
-                  <Link key={it.to} className="l-menu-item" to={it.to} role="menuitem">
-                    {it.label}
-                  </Link>
-                ))}
+              {items.map((it) => (
+                <Link
+                  key={it.to}
+                  className="l-menu-item"
+                  to={it.to}
+                  role="menuitem"
+                >
+                  {it.label}
+                </Link>
+              ))}
 
               {isAuthed && (
-                <button type="button" className="l-menu-item l-menu-item-danger" onClick={onLogout}>
+                <button
+                  type="button"
+                  className="l-menu-item l-menu-item-danger"
+                  onClick={onLogout}
+                >
                   Выйти
                 </button>
               )}
