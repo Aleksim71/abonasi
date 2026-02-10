@@ -1,6 +1,6 @@
 // frontend/src/pages/DraftPhotosPage.tsx
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { MemoryRouter, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
 import { useAuth } from '../store/auth.store';
@@ -93,9 +93,8 @@ function getDpIndexFromPoint(clientX: number, clientY: number): number | null {
   return Number.isFinite(idx) && idx >= 0 ? idx : null;
 }
 
-function DraftPhotosPageInner() {
+export function DraftPhotosPage() {
   const nav = useNavigate();
-
   const { id } = useParams();
   const adId = String(id ?? '').trim();
 
@@ -118,7 +117,6 @@ function DraftPhotosPageInner() {
 
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
-
   const [waitingForOnline, setWaitingForOnline] = useState(false);
 
   const [showSaved, setShowSaved] = useState(false);
@@ -317,8 +315,8 @@ function DraftPhotosPageInner() {
         }
 
         dispatch({ type: 'UPLOAD_SUCCESS', payload: { localId, serverPhoto } });
-      } catch (e) {
-        dispatch({ type: 'UPLOAD_ERROR', payload: { localId, message: toUserMessage(e) } });
+      } catch (err) {
+        dispatch({ type: 'UPLOAD_ERROR', payload: { localId, message: toUserMessage(err) } });
       }
     },
     [adId, canUpload, token]
@@ -858,23 +856,4 @@ function DraftPhotosPageInner() {
       </div>
     </div>
   );
-}
-
-/**
- * IMPORTANT:
- * Some tests render DraftPhotosPage without a Router.
- * We wrap it into MemoryRouter in that case to keep useNavigate() safe.
- */
-export function DraftPhotosPage() {
-  try {
-    return <DraftPhotosPageInner />;
-  } catch (e) {
-    // If someone rendered it without Router, react-router hooks throw.
-    // Fallback to MemoryRouter (keeps tests happy).
-    return (
-      <MemoryRouter>
-        <DraftPhotosPageInner />
-      </MemoryRouter>
-    );
-  }
 }

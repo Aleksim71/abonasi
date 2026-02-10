@@ -1,17 +1,7 @@
 // src/app/__tests__/DraftPhotosMobileReorder.test.tsx
-import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-
-import { DraftPhotosPage } from '../../pages/DraftPhotosPage';
-
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<any>('react-router-dom');
-  return {
-    ...actual,
-    useParams: () => ({ id: 'ad-1' })
-  };
-});
+import { screen, fireEvent } from '@testing-library/react';
+import { renderDraftPhotosPage } from './DraftPhotosPage.test.helpers';
 
 vi.mock('../../store/auth.store', () => {
   return {
@@ -106,8 +96,8 @@ describe('B8 mobile reorder (touch long-press)', () => {
   it(
     'arms touch reorder mode on long-press and clears it on release',
     async () => {
-      // 1) ВАЖНО: render/findBy* — только на REAL timers
-      render(<DraftPhotosPage />);
+      // render inside Router so DraftPhotosPage can use useNavigate/useParams safely
+      renderDraftPhotosPage('/draft/ad-1/photos');
 
       expect(screen.queryByText('Нет adId в URL')).toBeNull();
       expect(screen.queryByText('Нет доступа')).toBeNull();
@@ -126,7 +116,6 @@ describe('B8 mobile reorder (touch long-press)', () => {
 
       const markerBefore = detectTouchReorderMarker();
 
-      // 2) Теперь включаем fake timers ТОЛЬКО на long-press окно
       vi.useFakeTimers();
 
       fireEvent.pointerDown(tileA, {
@@ -138,12 +127,10 @@ describe('B8 mobile reorder (touch long-press)', () => {
         clientY: 10
       });
 
-      // long-press (обычно 350–500ms)
       vi.advanceTimersByTime(650);
 
       const markerArmed = detectTouchReorderMarker();
 
-      // sanity: DOM живой
       expect(screen.getByAltText('a.png')).toBeTruthy();
       expect(screen.getByAltText('b.png')).toBeTruthy();
 
@@ -156,17 +143,13 @@ describe('B8 mobile reorder (touch long-press)', () => {
         clientY: 10
       });
 
-      // 3) Возвращаем real timers, чтобы любые микро-асинхронности отработали нормально
       vi.useRealTimers();
 
-      // Дадим промисам/эффектам шанс отработать (без waitFor, чтобы не зависеть от таймеров)
       await Promise.resolve();
       await Promise.resolve();
 
       const markerAfter = detectTouchReorderMarker();
 
-      // Если маркер появился — он должен исчезнуть/вернуться как было.
-      // Если маркера нет — просто не ломаемся (реализация может быть без явного маркера).
       if (markerArmed !== null) {
         if (markerBefore === null) {
           expect(markerAfter).toBeNull();
