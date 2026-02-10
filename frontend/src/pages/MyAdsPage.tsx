@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as AdsApi from '../api/ads.api';
 import { ApiError } from '../api/http';
@@ -6,23 +6,6 @@ import { ErrorBox } from '../ui/ErrorBox';
 import { Loading } from '../ui/Loading';
 
 import './myAds.css';
-
-function statusLabel(status: AdsApi.AdStatus): string {
-  switch (status) {
-    case 'draft':
-      return 'Черновик';
-    case 'active':
-      return 'Опубликовано';
-    case 'stopped':
-      return 'Остановлено';
-    default:
-      return status;
-  }
-}
-
-function statusClass(status: AdsApi.AdStatus): string {
-  return `myads__status myads__status--${status}`;
-}
 
 export function MyAdsPage() {
   const [ads, setAds] = useState<AdsApi.AdListItem[]>([]);
@@ -58,13 +41,25 @@ export function MyAdsPage() {
     };
   }, [load]);
 
+  const counts = useMemo(() => {
+    let drafts = 0;
+    let published = 0;
+
+    for (const ad of ads) {
+      if (ad.status === 'draft') drafts += 1;
+      if (ad.status === 'active') published += 1;
+    }
+
+    return { drafts, published };
+  }, [ads]);
+
   return (
     <div className="myads">
       <div className="myads__header">
         <h2 className="myads__title">Мои объявления</h2>
 
         <Link className="btn" to="/draft/new" style={{ textDecoration: 'none' }}>
-          Создать объявление
+          + Создать объявление
         </Link>
       </div>
 
@@ -81,42 +76,43 @@ export function MyAdsPage() {
 
       {loading && <Loading />}
 
-      {!loading && !error && ads.length === 0 && (
-        <div className="card myads__empty">
-          <div className="myads__empty-title">У вас пока нет объявлений</div>
-          <div className="myads__empty-text muted">
-            Создайте первое объявление — это займёт пару минут.
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <Link className="btn" to="/draft/new" style={{ textDecoration: 'none' }}>
-              Создать объявление
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {!loading && !error && ads.length > 0 && (
+      {!loading && !error && (
         <div className="myads__grid">
-          {ads.map((ad) => (
-            <div className="card myads__card" key={ad.id}>
-              <div className="myads__card-meta">
-                <div className="myads__card-title">{ad.title}</div>
-                <span className={statusClass(ad.status)}>
-                  {statusLabel(ad.status)}
-                </span>
-              </div>
-
-              <div className="small muted">
-                {ad.price != null
-                  ? `${ad.price} ${ad.currency ?? ''}`.trim()
-                  : 'Цена не указана'}
-              </div>
-
-              <div>
-                <Link to={`/ads/${ad.id}`}>Открыть</Link>
-              </div>
+          {/* Баланс */}
+          <div className="card myads__card">
+            <div className="myads__card-meta">
+              <div className="myads__card-title">Баланс</div>
             </div>
-          ))}
+
+            <div className="small muted" style={{ marginTop: 8 }}>
+              0,00 €
+            </div>
+          </div>
+
+          {/* Объявления: счётчики */}
+          <div className="card myads__card">
+            <div className="myads__card-meta">
+              <div className="myads__card-title">Объявления</div>
+            </div>
+
+            <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <span className="small muted">Опубликовано</span>
+                <strong>{counts.published}</strong>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <span className="small muted">Черновики</span>
+                <strong>{counts.drafts}</strong>
+              </div>
+
+              {ads.length === 0 && (
+                <div className="small muted" style={{ marginTop: 6 }}>
+                  У вас пока нет объявлений. Нажмите «Создать объявление», чтобы начать.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
