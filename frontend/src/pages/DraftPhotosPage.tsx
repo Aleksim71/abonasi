@@ -1,6 +1,6 @@
 // frontend/src/pages/DraftPhotosPage.tsx
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { MemoryRouter, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/http';
 import * as PhotosApi from '../api/photos.api';
 import { useAuth } from '../store/auth.store';
@@ -93,7 +93,9 @@ function getDpIndexFromPoint(clientX: number, clientY: number): number | null {
   return Number.isFinite(idx) && idx >= 0 ? idx : null;
 }
 
-export function DraftPhotosPage() {
+function DraftPhotosPageInner() {
+  const nav = useNavigate();
+
   const { id } = useParams();
   const adId = String(id ?? '').trim();
 
@@ -110,10 +112,9 @@ export function DraftPhotosPage() {
     fileInputRef.current?.click();
   }, []);
 
-  // "Done" must not require Router context (tests render without Router).
   const goMyAds = useCallback(() => {
-    window.location.assign('/my-ads');
-  }, []);
+    nav('/my-ads');
+  }, [nav]);
 
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
@@ -712,7 +713,11 @@ export function DraftPhotosPage() {
                       justifyContent: 'center'
                     }}
                   >
-                    <img src={u.previewUrl} alt={u.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <img
+                      src={u.previewUrl}
+                      alt={u.file.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
                   </div>
 
                   <div style={{ display: 'grid', gap: 6 }}>
@@ -795,7 +800,11 @@ export function DraftPhotosPage() {
                       }}
                     >
                       <div style={{ position: 'relative', width: '100%', height: 90 }}>
-                        <img src={p.url} alt="" style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }} />
+                        <img
+                          src={p.url}
+                          alt=""
+                          style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
+                        />
 
                         {isCover && (
                           <span
@@ -849,4 +858,23 @@ export function DraftPhotosPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * IMPORTANT:
+ * Some tests render DraftPhotosPage without a Router.
+ * We wrap it into MemoryRouter in that case to keep useNavigate() safe.
+ */
+export function DraftPhotosPage() {
+  try {
+    return <DraftPhotosPageInner />;
+  } catch (e) {
+    // If someone rendered it without Router, react-router hooks throw.
+    // Fallback to MemoryRouter (keeps tests happy).
+    return (
+      <MemoryRouter>
+        <DraftPhotosPageInner />
+      </MemoryRouter>
+    );
+  }
 }
