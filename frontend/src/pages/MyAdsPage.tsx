@@ -65,7 +65,7 @@ export function MyAdsPage() {
 
       {error && (
         <div className="myads__retry">
-          <div style={{ flex: 1 }}>
+          <div className="myads__retry-content">
             <ErrorBox title="Ошибка" message={error} />
           </div>
           <button className="btn" type="button" onClick={load}>

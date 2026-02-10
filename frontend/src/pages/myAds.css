@@ -1,10 +1,9 @@
-/* MyAds — MVP styling (Abonasi)
-   Утилитарно, спокойно, без маркетинга */
+/* My Ads — MVP dashboard */
 
 .myads {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
 }
 
 .myads__header {
@@ -12,74 +11,91 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 16px;
 }
 
 .myads__title {
+  font-size: 22px;
+  font-weight: 700;
   margin: 0;
-}
-
-.myads__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-.myads__card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.myads__card-title {
-  font-weight: 600;
-}
-
-.myads__card-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.myads__status {
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.myads__status--draft {
-  color: var(--muted, #777);
-}
-
-.myads__status--active {
-  color: #1a7f37; /* спокойно-зелёный */
-}
-
-.myads__status--stopped {
-  color: #b42318; /* мягкий красный */
-}
-
-.myads__empty {
-  text-align: center;
-  padding: 20px;
-}
-
-.myads__empty-title {
-  font-weight: 600;
-}
-
-.myads__empty-text {
-  margin-top: 6px;
-  font-size: 14px;
 }
 
 .myads__retry {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  margin: 12px 0 16px;
 }
 
-@media (max-width: 640px) {
+.myads__retry-content {
+  flex: 1;
+}
+
+.myads__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.myads__card {
+  padding: 14px;
+}
+
+.myads__card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.myads__card-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.myads__balance {
+  margin-top: 8px;
+}
+
+.myads__counters {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.myads__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.myads__row strong {
+  font-size: 16px;
+}
+
+.myads__hint {
+  margin-top: 6px;
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+  .myads {
+    padding: 12px;
+  }
+
+  .myads__title {
+    font-size: 20px;
+  }
+
   .myads__header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .myads__header .btn {
+    width: 100%;
+    text-align: center;
   }
 }
