@@ -35,3 +35,7 @@ backend/.env.local
 
 # vite cache
 frontend/.vite/
+
+# Runtime uploads (must NOT be committed)
+backend/src/public/uploads/**
+!backend/src/public/uploads/.gitkeep
