@@ -1,6 +1,3 @@
-// frontend/src/pages/InfoSettingsPage.tsx
-// Экран "Инфо" — MVP (публичный, guest vs auth)
-
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth.store';
 import { useLocationStore } from '../store/location.store';
@@ -8,11 +5,6 @@ import './InfoSettingsPage.css';
 
 type LocationStoreShape = {
   selectedId: string | null;
-
-  // Если в сторе есть готовая “человекочитаемая” строка — используем её.
-  // Если этих полей нет в реальном сторе — TypeScript это не сломает,
-  // потому что мы читаем их через селектор с приведением к этому shape
-  // (но без any).
   selectedLabel?: string | null;
   selectedName?: string | null;
 };
@@ -23,10 +15,7 @@ export function InfoSettingsPage() {
 
   const isAuthed = Boolean(token);
 
-  // ✅ Источник истины как в RequireLocation
   const selectedId = useLocationStore((s) => (s as unknown as LocationStoreShape).selectedId);
-
-  // ✅ Пытаемся взять “готовую” подпись, если стор её предоставляет
   const selectedLabel = useLocationStore((s) => {
     const st = s as unknown as LocationStoreShape;
     return st.selectedLabel ?? st.selectedName ?? null;
