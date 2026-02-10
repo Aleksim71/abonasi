@@ -27,6 +27,16 @@
   position: relative;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.l-icon-btn {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  line-height: 1;
 }
 
 .l-menu-btn {
