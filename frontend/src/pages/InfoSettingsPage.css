@@ -1,0 +1,127 @@
+/* frontend/src/pages/InfoSettingsPage.css */
+/* MVP styles — reuse Abonasi spacing & typography rhythm */
+
+.info-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.info-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.info-back {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.info-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.info-section h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.info-section p {
+  line-height: 1.5;
+}
+
+.info-list {
+  padding-left: 18px;
+}
+
+.info-list li {
+  margin-bottom: 6px;
+}
+
+.info-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-links a {
+  text-decoration: none;
+}
+
+.info-meta {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+
+.info-meta li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+  padding: 4px 0;
+}
+
+.info-meta span:first-child {
+  opacity: 0.7;
+}
+
+.info-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.info-muted {
+  opacity: 0.7;
+  font-size: 14px;
+}
+
+/* Buttons — MVP, без темы */
+.btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: #111;
+  color: #fff;
+}
+
+.btn.secondary {
+  background: transparent;
+  border-color: #ccc;
+}
+
+.btn.danger {
+  background: #c62828;
+  color: #fff;
+}
+
+.info-account {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 20px;
+}
+
+.info-guest {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 20px;
+}

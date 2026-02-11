@@ -1,4 +1,3 @@
-
 import { createBrowserRouter } from 'react-router-dom';
 import { AppRoot } from './App';
 import { RequireAuth, RequireLocation } from './guards';
@@ -12,6 +11,7 @@ import { AdDetailsPage } from '../pages/AdDetailsPage';
 import { MyAdsPage } from '../pages/MyAdsPage';
 import { DraftCreatePage } from '../pages/DraftCreatePage';
 import { DraftPhotosPage } from '../pages/DraftPhotosPage';
+import { InfoSettingsPage } from '../pages/InfoSettingsPage';
 
 export const router = createBrowserRouter([
   {
@@ -20,9 +20,12 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomePage /> },
 
+      // public pages
+      { path: 'info', element: <InfoSettingsPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'register', element: <RegisterPage /> },
 
+      // private zone
       {
         element: <RequireAuth />,
         children: [
